@@ -29,7 +29,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex h-screen flex-col bg-background">
       <header className="sticky top-0 z-20 border-b border-border bg-background/80 backdrop-blur">
         <div className="flex w-full items-center justify-between gap-4 px-4 py-3">
-          <Link href="/" className="font-brand text-lg tracking-tight">
+          <Link href="/" className="flex items-center gap-2 font-brand text-lg tracking-tight">
+            <img src="/avatar.webp" alt="" className="size-8 rounded-full object-cover" />
             Mitchaelina
           </Link>
           <div className="flex items-center gap-3">

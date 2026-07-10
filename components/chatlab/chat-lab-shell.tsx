@@ -36,7 +36,10 @@ export default function ChatLabShell({ children }: { children: React.ReactNode }
               <ChatLabSidebar onNavigate={() => setSheetOpen(false)} />
             </SheetContent>
           </Sheet>
-          <span className="font-brand text-base">Mitchaelina</span>
+          <span className="flex items-center gap-2 font-brand text-base">
+            <img src="/avatar.webp" alt="" className="size-6 rounded-full object-cover" />
+            Mitchaelina
+          </span>
         </div>
         {children}
       </div>
