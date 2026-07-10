@@ -57,7 +57,7 @@ export default function AuthView() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
-          <CardTitle className="text-lg">Mitchaelina</CardTitle>
+          <CardTitle className="font-brand text-2xl font-normal">Mitchaelina</CardTitle>
           <CardDescription>Sign in</CardDescription>
         </CardHeader>
         <CardContent>

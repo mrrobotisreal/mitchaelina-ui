@@ -36,7 +36,7 @@ export default function ChatLabShell({ children }: { children: React.ReactNode }
               <ChatLabSidebar onNavigate={() => setSheetOpen(false)} />
             </SheetContent>
           </Sheet>
-          <span className="text-sm font-semibold">Mitchaelina</span>
+          <span className="font-brand text-base">Mitchaelina</span>
         </div>
         {children}
       </div>

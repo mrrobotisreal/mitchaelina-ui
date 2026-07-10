@@ -3,8 +3,23 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * Brand font for the "Mitchaelina" wordmark. `font-display: swap` lets the
+ * text render in a system fallback while the font streams, so first paint is
+ * never blocked by font I/O. Only used via the `font-brand` utility — body
+ * text stays on the system stack.
+ */
+@font-face {
+  font-family: "Emilys Candy";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/EmilysCandy-Regular.ttf") format("truetype");
+}
+
 @theme inline {
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-brand: "Emilys Candy", ui-sans-serif, system-ui, sans-serif;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
