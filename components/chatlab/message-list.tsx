@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import ImageViewerModal from './image-viewer-modal';
+import VideoViewerModal from './video-viewer-modal';
 import { formatBytes } from './display';
 import { relativeTime } from '@/lib/relativeTime';
 import { formatDurationMs } from '@/lib/formatDuration';
@@ -78,9 +79,11 @@ function LiveTicker({ startedAt, thinking }: { startedAt: number; thinking: bool
 
 function AttachmentChips({ attachments }: { attachments: ChatLabAttachment[] }) {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [videoIndex, setVideoIndex] = useState<number | null>(null);
   if (attachments.length === 0) return null;
   const images = attachments.filter((a) => a.kind === 'image');
-  const files = attachments.filter((a) => a.kind !== 'image');
+  const videos = attachments.filter((a) => a.contentType.startsWith('video/'));
+  const files = attachments.filter((a) => a.kind !== 'image' && !a.contentType.startsWith('video/'));
   return (
     <div className="mt-1.5 space-y-2">
       {images.length > 0 && (
@@ -94,6 +97,22 @@ function AttachmentChips({ attachments }: { attachments: ChatLabAttachment[] }) 
               aria-label={`Open ${a.fileName}`}
             >
               <img src={a.viewUrl} alt={a.fileName} className="h-28 w-auto max-w-[220px] object-cover" />
+            </button>
+          ))}
+        </div>
+      )}
+      {videos.length > 0 && (
+        <div className="flex flex-wrap justify-end gap-2">
+          {videos.map((a, i) => (
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => setVideoIndex(i)}
+              className="overflow-hidden rounded-md border border-border bg-muted transition-opacity hover:opacity-90"
+              aria-label={`Play ${a.fileName}`}
+            >
+              {/* muted preview frame; the modal owns real playback */}
+              <video src={a.viewUrl} muted playsInline preload="metadata" className="h-28 w-auto max-w-[220px] object-cover" />
             </button>
           ))}
         </div>
@@ -126,6 +145,14 @@ function AttachmentChips({ attachments }: { attachments: ChatLabAttachment[] }) 
         open={lightboxIndex !== null}
         onOpenChange={(o) => {
           if (!o) setLightboxIndex(null);
+        }}
+      />
+      <VideoViewerModal
+        videos={videos}
+        startIndex={videoIndex ?? 0}
+        open={videoIndex !== null}
+        onOpenChange={(o) => {
+          if (!o) setVideoIndex(null);
         }}
       />
     </div>

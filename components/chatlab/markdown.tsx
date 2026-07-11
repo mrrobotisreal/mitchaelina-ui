@@ -14,6 +14,18 @@ import 'highlight.js/styles/github-dark.css';
 // react-markdown's default HTML-skipping (no rehype-raw) since this is model
 // output. Styling is Tailwind classes scoped under the chatlab-md wrapper.
 
+// A URL "is a video" when its path ends in a common video extension (query
+// strings — e.g. presigned-URL signatures — are ignored).
+function isVideoUrl(href: string | undefined): href is string {
+  if (!href) return false;
+  try {
+    const path = new URL(href, 'https://placeholder.invalid').pathname.toLowerCase();
+    return /\.(mp4|webm|mov|m4v)$/.test(path);
+  } catch {
+    return false;
+  }
+}
+
 function extractText(node: ReactNode): string {
   if (typeof node === 'string' || typeof node === 'number') return String(node);
   if (Array.isArray(node)) return node.map(extractText).join('');
@@ -110,10 +122,40 @@ function ChatLabMarkdownInner({ content, className }: { content: string; classNa
               {children}
             </td>
           ),
-          a: ({ children, ...props }) => (
-            <a {...props} target="_blank" rel="noopener noreferrer">
-              {children}
-            </a>
+          // Links to video files render as an inline player (video-generation
+          // models return their output as a plain URL in the text). Everything
+          // else stays a normal new-tab link.
+          a: ({ children, ...props }) => {
+            if (isVideoUrl(props.href)) {
+              return (
+                <span className="my-3 block">
+                  <video
+                    src={props.href}
+                    controls
+                    playsInline
+                    preload="metadata"
+                    className="max-h-[420px] w-full max-w-xl rounded-lg border border-border bg-black"
+                  />
+                  <a
+                    {...props}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-1 inline-block text-xs text-muted-foreground no-underline hover:underline"
+                  >
+                    {children}
+                  </a>
+                </span>
+              );
+            }
+            return (
+              <a {...props} target="_blank" rel="noopener noreferrer">
+                {children}
+              </a>
+            );
+          },
+          // Generated/linked images stay constrained to the bubble.
+          img: ({ alt, ...props }) => (
+            <img {...props} alt={alt ?? ''} className="my-3 max-h-[420px] w-auto max-w-full rounded-lg border border-border" />
           ),
         }}
       >
