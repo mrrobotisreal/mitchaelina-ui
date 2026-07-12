@@ -4,12 +4,14 @@ import { useEffect, useState } from 'react';
 import { ChevronLeft, ChevronRight, Download, X } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { downloadMedia } from '@/lib/downloadMedia';
 
 // The viewer only needs these fields; ChatLabAttachment satisfies it.
 interface ViewerVideo {
   viewUrl: string;
   downloadUrl?: string | null;
   contentType?: string;
+  fileName?: string;
 }
 
 interface VideoViewerModalProps {
@@ -66,11 +68,14 @@ export default function VideoViewerModal({ videos, startIndex, open, onOpenChang
           )}
 
           <div className="absolute top-2 right-2 flex gap-2">
-            {current?.downloadUrl && (
-              <Button asChild size="icon" variant="secondary" aria-label="Download video">
-                <a href={current.downloadUrl}>
-                  <Download className="size-4" />
-                </a>
+            {current && (
+              <Button
+                size="icon"
+                variant="secondary"
+                aria-label="Download video"
+                onClick={() => void downloadMedia(current.downloadUrl || current.viewUrl, current.fileName)}
+              >
+                <Download className="size-4" />
               </Button>
             )}
             <Button size="icon" variant="secondary" aria-label="Close" onClick={() => onOpenChange(false)}>

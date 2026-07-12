@@ -31,6 +31,11 @@ export const ChatLabModelSchema = z.object({
   supportsReasoning: z.boolean(),
   supportsTools: z.boolean(), // can read project assets on demand (read_asset)
   supportsAudio: z.boolean(), // input_audio content parts
+  // Output modalities — optional for compatibility with a not-yet-redeployed API
+  // (whose catalog was text-output models only, hence the defaults).
+  supportsText: z.boolean().optional().default(true), // "text" in output_modalities
+  supportsImageGen: z.boolean().optional().default(false), // "image" in output_modalities
+  supportsVideoGen: z.boolean().optional().default(false), // "video" in output_modalities
   supportedEfforts: z.array(ChatLabEffortSchema).nullable(),
   pricing: ChatLabModelPricingSchema,
   created: z.number(),
