@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, Paperclip, Send, Square, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -10,7 +10,9 @@ import {
   chatLabMaxBytes,
   type ChatLabAttachmentKind,
   type ChatLabEffortOrOff,
+  type ChatLabGenerationOptions,
   type ChatLabModel,
+  type ChatLabOutputModality,
 } from '@/schemas/chatLab';
 import {
   deleteChatLabAttachment,
@@ -21,6 +23,30 @@ import {
 } from '@/lib/chatlab/api';
 import ModelPicker from './model-picker';
 import ReasoningPicker from './reasoning-picker';
+import GenerationOptions from './generation-options';
+
+// The output modalities a model can PRODUCE (text chat, image gen, video gen).
+// A model may support more than one (e.g. Gemini-image does text + image); the
+// composer shows the toggle only then, and auto-forces the single option
+// otherwise (Seedream → Image, Veo → Video, Opus → Text).
+function modelModalities(m: ChatLabModel | null): ChatLabOutputModality[] {
+  if (!m) return ['text'];
+  const out: ChatLabOutputModality[] = [];
+  if (m.supportsText) out.push('text');
+  if (m.supportsImageGen) out.push('image');
+  if (m.supportsVideoGen) out.push('video');
+  return out.length > 0 ? out : ['text'];
+}
+
+const MODALITY_LABEL: Record<ChatLabOutputModality, string> = {
+  text: 'Text',
+  image: 'Image',
+  video: 'Video',
+};
+
+// Image-only accept string for generation modes (attachments are references /
+// frames, never files).
+const GENERATION_IMAGE_ACCEPT = 'image/png,image/jpeg,image/webp,image/gif';
 
 interface PendingAttachment {
   localId: number;
@@ -41,6 +67,12 @@ interface ComposerProps {
   onModelChange: (modelId: string) => void;
   reasoningEffort: ChatLabEffortOrOff;
   onReasoningEffortChange: (effort: ChatLabEffortOrOff) => void;
+  /** Output modality (text chat vs image/video generation) — controlled by the
+   *  parent so it can re-seed when the model changes. */
+  outputModality: ChatLabOutputModality;
+  onOutputModalityChange: (modality: ChatLabOutputModality) => void;
+  generationOptions: ChatLabGenerationOptions;
+  onGenerationOptionsChange: (options: ChatLabGenerationOptions) => void;
   isStreaming: boolean;
   /** Project chat + assets present + selected model can't call tools. */
   assetHint?: boolean;
@@ -59,6 +91,10 @@ export default function Composer({
   onModelChange,
   reasoningEffort,
   onReasoningEffortChange,
+  outputModality,
+  onOutputModalityChange,
+  generationOptions,
+  onGenerationOptionsChange,
   isStreaming,
   assetHint,
   onSend,
@@ -75,6 +111,8 @@ export default function Composer({
   }, [attachments]);
 
   const selectedModel = models.find((m) => m.id === model) ?? null;
+  const modalities = useMemo(() => modelModalities(selectedModel), [selectedModel]);
+  const isGeneration = outputModality !== 'text';
 
   // Auto-reset effort to Off when switching to a model without reasoning.
   useEffect(() => {
@@ -82,6 +120,14 @@ export default function Composer({
       onReasoningEffortChange('');
     }
   }, [selectedModel, reasoningEffort, onReasoningEffortChange]);
+
+  // Keep the output modality valid for the selected model (the parent holds the
+  // state; the composer corrects it on model change, like the reasoning reset).
+  useEffect(() => {
+    if (selectedModel && !modalities.includes(outputModality)) {
+      onOutputModalityChange(modalities[0]);
+    }
+  }, [selectedModel, modalities, outputModality, onOutputModalityChange]);
 
   // Auto-grow the textarea up to a cap; reset height when cleared.
   const autoGrow = useCallback(() => {
@@ -106,9 +152,10 @@ export default function Composer({
   const uploading = attachments.some((a) => a.status === 'uploading');
   const readyAttachments = attachments.filter((a) => a.status === 'done' && a.attachmentId);
   // Vision guard (client half — the server 400s as belt-and-suspenders):
-  // pending image attachments + a text-only model → send is blocked.
+  // pending image attachments + a text-only model → send is blocked. Not
+  // applicable in generation modes (images there are references/frames).
   const imagesPending = attachments.some((a) => a.kind === 'image');
-  const visionBlocked = imagesPending && !!selectedModel && !selectedModel.supportsImages;
+  const visionBlocked = !isGeneration && imagesPending && !!selectedModel && !selectedModel.supportsImages;
 
   const startUpload = useCallback(
     async (file: File) => {
@@ -122,6 +169,10 @@ export default function Composer({
         return;
       }
       const { kind, contentType } = resolved;
+      if (isGeneration && kind !== 'image') {
+        toast.error('Only images can guide media generation');
+        return;
+      }
       if (isChatLabAttachmentOversize(file.size, kind, contentType)) {
         const maxMB = Math.round(chatLabMaxBytes(kind, contentType) / (1024 * 1024));
         toast.error(`${file.name} exceeds the ${maxMB} MB limit`);
@@ -168,7 +219,7 @@ export default function Composer({
         toast.error(`Upload failed: ${file.name}`);
       }
     },
-    [sessionId],
+    [sessionId, isGeneration],
   );
 
   const onPickFiles = (files: FileList | null) => {
@@ -191,12 +242,12 @@ export default function Composer({
     });
   };
 
-  const canSend =
-    !isStreaming &&
-    !uploading &&
-    !visionBlocked &&
-    !!model &&
-    (text.trim().length > 0 || readyAttachments.length > 0);
+  // Generation always needs a text prompt; text chat can send on attachments
+  // alone.
+  const hasContent = isGeneration
+    ? text.trim().length > 0
+    : text.trim().length > 0 || readyAttachments.length > 0;
+  const canSend = !isStreaming && !uploading && !visionBlocked && !!model && hasContent;
 
   const handleSend = () => {
     if (!canSend || !model) return;
@@ -259,7 +310,11 @@ export default function Composer({
             }
           }}
           rows={1}
-          placeholder="Message the model… (Enter to send, Shift+Enter for a new line)"
+          placeholder={
+            isGeneration
+              ? `Describe the ${outputModality} to generate… (Enter to send)`
+              : 'Message the model… (Enter to send, Shift+Enter for a new line)'
+          }
           className="max-h-60 min-h-[2.5rem] w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground"
         />
       </div>
@@ -272,7 +327,7 @@ export default function Composer({
           disabled={attachments.length >= CHATLAB_MAX_ATTACHMENTS}
           className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
           aria-label="Attach files"
-          title="Attach images, PDFs, or text files"
+          title={isGeneration ? 'Attach an image to guide generation' : 'Attach images, PDFs, or text files'}
         >
           <Paperclip className="size-4" />
         </button>
@@ -281,14 +336,44 @@ export default function Composer({
           value={model}
           onChange={onModelChange}
           disabled={isStreaming}
-          dimNonVision={imagesPending}
+          dimNonVision={imagesPending && !isGeneration}
         />
-        <ReasoningPicker
-          model={selectedModel}
-          value={reasoningEffort}
-          onChange={onReasoningEffortChange}
-          disabled={isStreaming}
-        />
+        {modalities.length > 1 && (
+          <div className="flex items-center gap-1" role="group" aria-label="Output type">
+            {modalities.map((m) => (
+              <button
+                key={m}
+                type="button"
+                disabled={isStreaming}
+                onClick={() => onOutputModalityChange(m)}
+                aria-pressed={outputModality === m}
+                className={cn(
+                  'h-8 rounded-md border px-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+                  outputModality === m
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-border text-muted-foreground hover:bg-accent/50',
+                )}
+              >
+                {MODALITY_LABEL[m]}
+              </button>
+            ))}
+          </div>
+        )}
+        {isGeneration ? (
+          <GenerationOptions
+            modality={outputModality as Exclude<ChatLabOutputModality, 'text'>}
+            value={generationOptions}
+            onChange={onGenerationOptionsChange}
+            disabled={isStreaming}
+          />
+        ) : (
+          <ReasoningPicker
+            model={selectedModel}
+            value={reasoningEffort}
+            onChange={onReasoningEffortChange}
+            disabled={isStreaming}
+          />
+        )}
         <div className="flex-1" />
         {isStreaming ? (
           <button
@@ -326,9 +411,16 @@ export default function Composer({
           {selectedModel.name} can&apos;t see images — pick a vision-capable model or remove the image.
         </p>
       )}
-      {assetHint && (
+      {assetHint && !isGeneration && (
         <p className="px-3 pb-2 text-[11px] text-muted-foreground">
           This model can&apos;t read project assets on demand — text assets are inlined, other assets unavailable.
+        </p>
+      )}
+      {isGeneration && (
+        <p className="px-3 pb-2 text-[11px] text-muted-foreground">
+          {outputModality === 'video'
+            ? 'Generating video — attach an image to use as the first frame (optional).'
+            : 'Generating an image — attach image(s) to guide it (optional).'}
         </p>
       )}
 
@@ -336,7 +428,7 @@ export default function Composer({
         ref={fileInputRef}
         type="file"
         multiple
-        accept={chatLabAccept()}
+        accept={isGeneration ? GENERATION_IMAGE_ACCEPT : chatLabAccept()}
         className="hidden"
         onChange={(e) => {
           onPickFiles(e.target.files);

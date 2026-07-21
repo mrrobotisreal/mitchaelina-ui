@@ -11,6 +11,9 @@ import { chatLabKeys, projectKeys } from './useChatLab';
 import {
   ChatLabStreamEventSchema,
   type ChatLabEffortOrOff,
+  type ChatLabGenerationEvent,
+  type ChatLabGenerationOptions,
+  type ChatLabOutputModality,
   type ChatLabSessionDetailResponse,
   type ChatLabUsage,
 } from '@/schemas/chatLab';
@@ -54,6 +57,9 @@ export interface ChatStreamState {
   error: string | null;
   model: string | null;
   reasoningEffort: ChatLabEffortOrOff | null;
+  /** Non-null during a media-generation send — drives the "Generating image/
+   *  video…" placeholder in place of "Waiting for the model…". */
+  generation: Pick<ChatLabGenerationEvent, 'modality' | 'status'> | null;
   /** Date.now() when the send started — drives the live Thinking…/Responding…
    *  ticker (display-only; the server measures the persisted metrics). */
   startedAt: number | null;
@@ -69,6 +75,7 @@ const IDLE: ChatStreamState = {
   error: null,
   model: null,
   reasoningEffort: null,
+  generation: null,
   startedAt: null,
 };
 
@@ -78,6 +85,21 @@ export interface SendMessageParams {
   model: string;
   reasoningEffort: ChatLabEffortOrOff;
   attachmentIds: string[];
+  /** "" / "text" = a normal chat completion; "image"/"video" = generation. */
+  outputModality: ChatLabOutputModality;
+  /** Optional generation knobs (ignored for text). */
+  generationOptions?: ChatLabGenerationOptions;
+}
+
+// Drop empty option fields so the request carries only real overrides (the
+// server treats absent fields as provider defaults).
+function cleanGenerationOptions(o?: ChatLabGenerationOptions): ChatLabGenerationOptions | null {
+  if (!o) return null;
+  const out: ChatLabGenerationOptions = {};
+  if (o.aspectRatio) out.aspectRatio = o.aspectRatio;
+  if (o.resolution) out.resolution = o.resolution;
+  if (o.durationSeconds && o.durationSeconds > 0) out.durationSeconds = o.durationSeconds;
+  return Object.keys(out).length > 0 ? out : null;
 }
 
 export function useChatStream(sessionId: string) {
@@ -108,6 +130,7 @@ export function useChatStream(sessionId: string) {
       track('chat_message_sent', {
         model: params.model,
         reasoning_effort: params.reasoningEffort,
+        output_modality: params.outputModality,
         project: Boolean(cachedDetail?.session.projectId),
       });
 
@@ -153,6 +176,9 @@ export function useChatStream(sessionId: string) {
             model: params.model,
             reasoningEffort: params.reasoningEffort,
             attachmentIds: params.attachmentIds,
+            outputModality: params.outputModality,
+            generationOptions:
+              params.outputModality === 'text' ? null : cleanGenerationOptions(params.generationOptions),
           }),
           signal: controller.signal,
         });
@@ -219,6 +245,9 @@ export function useChatStream(sessionId: string) {
                 break;
               case 'usage':
                 setState((s) => ({ ...s, usage: parsed }));
+                break;
+              case 'generation':
+                setState((s) => ({ ...s, generation: { modality: parsed.modality, status: parsed.status } }));
                 break;
               case 'done':
                 setState((s) => ({ ...s, status: 'done' }));

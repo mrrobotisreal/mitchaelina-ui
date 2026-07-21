@@ -109,7 +109,7 @@ export const deleteChatLabAttachment = async (sessionId: string, attachmentId: s
 // allowlist. Browsers sometimes leave File.type empty (notably .md/.csv), so we
 // fall back to the extension. Returns null when unsupported.
 export function resolveChatLabAttachment(file: File): { kind: ChatLabAttachmentKind; contentType: string } | null {
-  for (const kind of ['image', 'file'] as ChatLabAttachmentKind[]) {
+  for (const kind of ['image', 'file'] as const) {
     const allow = CHATLAB_ATTACHMENT_EXT[kind];
     if (file.type && allow[file.type]) return { kind, contentType: file.type };
     const ext = file.name.split('.').pop()?.toLowerCase() ?? '';

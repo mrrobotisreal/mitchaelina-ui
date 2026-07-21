@@ -91,6 +91,11 @@ export function useChatLabSession(sessionId: string | null) {
     queryFn: () => api.fetchChatLabSession(sessionId as string),
     enabled: !!sessionId,
     staleTime: 2_000,
+    // While any message is still 'generating' (an in-flight video job), poll so
+    // the finished video lands without a manual refresh — for the sender after a
+    // tab close AND for the other user. Stops once nothing is generating.
+    refetchInterval: (query) =>
+      query.state.data?.messages.some((m) => m.status === 'generating') ? 10_000 : false,
     retry: queryRetry,
   });
 }

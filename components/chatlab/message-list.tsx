@@ -77,17 +77,22 @@ function LiveTicker({ startedAt, thinking }: { startedAt: number; thinking: bool
   );
 }
 
-function AttachmentChips({ attachments }: { attachments: ChatLabAttachment[] }) {
+// `align` places thumbnails/previews: user attachments hug the right ('end'),
+// assistant (generated) media hugs the left ('start').
+function AttachmentChips({ attachments, align = 'end' }: { attachments: ChatLabAttachment[]; align?: 'start' | 'end' }) {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [videoIndex, setVideoIndex] = useState<number | null>(null);
   if (attachments.length === 0) return null;
   const images = attachments.filter((a) => a.kind === 'image');
-  const videos = attachments.filter((a) => a.contentType.startsWith('video/'));
-  const files = attachments.filter((a) => a.kind !== 'image' && !a.contentType.startsWith('video/'));
+  const videos = attachments.filter((a) => a.kind === 'video' || a.contentType.startsWith('video/'));
+  const files = attachments.filter(
+    (a) => a.kind !== 'image' && a.kind !== 'video' && !a.contentType.startsWith('video/'),
+  );
+  const justify = align === 'end' ? 'justify-end' : 'justify-start';
   return (
     <div className="mt-1.5 space-y-2">
       {images.length > 0 && (
-        <div className="flex flex-wrap justify-end gap-2">
+        <div className={cn('flex flex-wrap gap-2', justify)}>
           {images.map((a, i) => (
             <button
               key={a.id}
@@ -102,7 +107,7 @@ function AttachmentChips({ attachments }: { attachments: ChatLabAttachment[] }) 
         </div>
       )}
       {videos.length > 0 && (
-        <div className="flex flex-wrap justify-end gap-2">
+        <div className={cn('flex flex-wrap gap-2', justify)}>
           {videos.map((a, i) => (
             <button
               key={a.id}
@@ -236,6 +241,29 @@ function UserBubble({ content, attachments }: { content: string; attachments?: C
 }
 
 function AssistantMessage({ message, sessionId }: { message: ChatLabMessage; sessionId: string }) {
+  // A video generation still in flight (submitted, poller waiting): a quiet
+  // placeholder card with no feedback/copy affordances. The session-detail
+  // refetch loop swaps it for the finished video (or an error) when the job
+  // lands — even for the other user or after a tab close.
+  if (message.status === 'generating') {
+    return (
+      <div className="px-4 py-2">
+        <div className="mb-1 flex flex-wrap items-center gap-1.5">
+          {message.model && (
+            <Badge variant="secondary" className="text-[10px]">
+              {message.model}
+            </Badge>
+          )}
+        </div>
+        <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" />
+          Generating video…
+        </div>
+        <div className="mt-1.5 text-[11px] text-muted-foreground">{relativeTime(message.createdAt)}</div>
+      </div>
+    );
+  }
+
   return (
     <div className="px-4 py-2">
       <div className="mb-1 flex flex-wrap items-center gap-1.5">
@@ -274,6 +302,9 @@ function AssistantMessage({ message, sessionId }: { message: ChatLabMessage; ses
       {message.status === 'error' && message.errorMessage && (
         <p className="mt-1 text-sm text-destructive">{message.errorMessage}</p>
       )}
+
+      {/* Generated media (image/video) is the assistant's answer — left-aligned. */}
+      <AttachmentChips attachments={message.attachments} align="start" />
 
       <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
         {message.promptTokens != null && message.completionTokens != null && (
@@ -337,7 +368,11 @@ function StreamingAssistant({ stream }: { stream: ChatStreamState }) {
         stream.toolEvents.length === 0 && (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="size-3.5 animate-spin" />
-            Waiting for the model…
+            {stream.generation
+              ? stream.generation.modality === 'video'
+                ? 'Generating video…'
+                : 'Generating image…'
+              : 'Waiting for the model…'}
           </p>
         )
       )}

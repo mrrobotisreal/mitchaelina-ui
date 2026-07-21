@@ -105,7 +105,9 @@ export const ChatLabSessionsResponseSchema = z.object({
 // Messages + attachments.
 // ---------------------------------------------------------------------------
 
-export const ChatLabAttachmentKindSchema = z.enum(['image', 'file']);
+// 'video' joins the kinds with media generation — generated MP4s are stored as
+// message-bound attachments exactly like uploaded images/files.
+export const ChatLabAttachmentKindSchema = z.enum(['image', 'file', 'video']);
 export type ChatLabAttachmentKind = z.infer<typeof ChatLabAttachmentKindSchema>;
 
 export const ChatLabAttachmentSchema = z.object({
@@ -138,7 +140,9 @@ export const ChatLabMessageSchema = z.object({
   reasoning: z.string().nullable(), // assistant only
   model: z.string().nullable(),
   reasoningEffort: z.string().nullable(),
-  status: z.enum(['complete', 'interrupted', 'error']),
+  // 'generating' is the transient state a video assistant row sits in between
+  // job submit and the poller's terminal update.
+  status: z.enum(['complete', 'interrupted', 'error', 'generating']),
   errorMessage: z.string().nullable(),
   promptTokens: z.number().nullable(),
   completionTokens: z.number().nullable(),
@@ -279,12 +283,38 @@ export const ChatLabStreamEventSchema = z.discriminatedUnion('type', [
     durationMs: z.number().nullish(),
     reasoningMs: z.number().nullish(),
   }),
+  // Media-generation progress: "running" at start, "polling" on each video
+  // poll tick, "ok" when an image finished storing. The terminal outcome still
+  // arrives via usage/done/error.
+  z.object({
+    type: z.literal('generation'),
+    modality: z.enum(['image', 'video']),
+    status: z.enum(['running', 'polling', 'ok']),
+  }),
   z.object({ type: z.literal('done'), status: z.string() }),
   z.object({ type: z.literal('error'), message: z.string() }),
 ]);
 export type ChatLabStreamEvent = z.infer<typeof ChatLabStreamEventSchema>;
 
 export type ChatLabUsage = Extract<ChatLabStreamEvent, { type: 'usage' }>;
+export type ChatLabGenerationEvent = Extract<ChatLabStreamEvent, { type: 'generation' }>;
+
+// ---------------------------------------------------------------------------
+// Media generation — send-side selection (mirrors the API's outputModality +
+// ChatGenerationOptions). "text" is the normal chat completion.
+// ---------------------------------------------------------------------------
+
+export const ChatLabOutputModalitySchema = z.enum(['text', 'image', 'video']);
+export type ChatLabOutputModality = z.infer<typeof ChatLabOutputModalitySchema>;
+
+/** Optional generation knobs; empty/0 means provider default (omitted from the
+ *  request). Aspect ratio "W:H", resolution one of the server's allowlist,
+ *  duration in seconds (video only). */
+export interface ChatLabGenerationOptions {
+  aspectRatio?: string;
+  resolution?: string;
+  durationSeconds?: number;
+}
 
 // ---------------------------------------------------------------------------
 // Usage & spend analytics + credit ledger. All times/buckets are UTC.
@@ -320,8 +350,18 @@ export type ChatLabStatsSummary = z.infer<typeof ChatLabStatsSummarySchema>;
 export const ChatLabStatsDimensionSchema = z.enum(['model', 'user', 'project', 'session', 'kind', 'type']);
 export type ChatLabStatsDimension = z.infer<typeof ChatLabStatsDimensionSchema>;
 
-/** The request-type filter values (?type= on breakdown/timeseries). */
-export const ChatLabRequestTypeSchema = z.enum(['text', 'file', 'image', 'pdf', 'audio', 'mixed']);
+/** The request-type filter values (?type= on breakdown/timeseries).
+ *  'image_gen'/'video_gen' mark generation sends (the model PRODUCED media). */
+export const ChatLabRequestTypeSchema = z.enum([
+  'text',
+  'file',
+  'image',
+  'pdf',
+  'audio',
+  'mixed',
+  'image_gen',
+  'video_gen',
+]);
 export type ChatLabRequestType = z.infer<typeof ChatLabRequestTypeSchema>;
 
 export const ChatLabStatsBreakdownRowSchema = z.object({
@@ -393,7 +433,9 @@ export type ChatLabCreditsResponse = z.infer<typeof ChatLabCreditsResponseSchema
 // parser; text files are inlined into the prompt (hence the small caps).
 // ---------------------------------------------------------------------------
 
-export const CHATLAB_ATTACHMENT_EXT: Record<ChatLabAttachmentKind, Record<string, string>> = {
+// Upload allowlist — only image + file are UPLOADABLE ('video' is a generated
+// output kind, never uploaded as a chat attachment).
+export const CHATLAB_ATTACHMENT_EXT: Record<'image' | 'file', Record<string, string>> = {
   image: {
     'image/png': 'png',
     'image/jpeg': 'jpg',

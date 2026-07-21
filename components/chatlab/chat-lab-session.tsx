@@ -8,7 +8,7 @@ import { ApiError } from '@/lib/apiClient';
 import { useQueryErrorRedirect } from '@/lib/useQueryErrorRedirect';
 import { useChatLabModels, useChatLabProject, useChatLabSession, useChatLabSessions } from '@/lib/chatlab/useChatLab';
 import { useChatStream } from '@/lib/chatlab/useChatStream';
-import type { ChatLabEffortOrOff } from '@/schemas/chatLab';
+import type { ChatLabEffortOrOff, ChatLabGenerationOptions, ChatLabOutputModality } from '@/schemas/chatLab';
 import MessageList from './message-list';
 import Composer from './composer';
 
@@ -35,6 +35,11 @@ export default function ChatLabSession({ sessionId }: { sessionId: string }) {
   const models = useMemo(() => modelsQuery.data ?? [], [modelsQuery.data]);
   const [model, setModel] = useState<string | null>(null);
   const [effort, setEffort] = useState<ChatLabEffortOrOff>('');
+  // Output modality + generation knobs are per-message local state, like the
+  // model/effort pickers. The composer auto-corrects the modality to one the
+  // selected model supports.
+  const [modality, setModality] = useState<ChatLabOutputModality>('text');
+  const [genOptions, setGenOptions] = useState<ChatLabGenerationOptions>({});
   const [seededFor, setSeededFor] = useState<string | null>(null);
 
   // Seed the pickers once the session + catalog have loaded: this session's
@@ -54,6 +59,10 @@ export default function ChatLabSession({ sessionId }: { sessionId: string }) {
         ? (lastEffort as ChatLabEffortOrOff)
         : '',
     );
+    // Reset generation state on (re)seed; the composer forces a valid modality
+    // for the chosen model (e.g. a media-only model → image/video).
+    setModality('text');
+    setGenOptions({});
     setSeededFor(sessionId);
   }
 
@@ -136,11 +145,23 @@ export default function ChatLabSession({ sessionId }: { sessionId: string }) {
               onModelChange={setModel}
               reasoningEffort={effort}
               onReasoningEffortChange={setEffort}
+              outputModality={modality}
+              onOutputModalityChange={setModality}
+              generationOptions={genOptions}
+              onGenerationOptionsChange={setGenOptions}
               isStreaming={stream.isStreaming}
               assetHint={assetHint}
               onSend={(content, attachmentIds) => {
                 if (!model) return;
-                void stream.sendMessage({ sessionId, content, model, reasoningEffort: effort, attachmentIds });
+                void stream.sendMessage({
+                  sessionId,
+                  content,
+                  model,
+                  reasoningEffort: effort,
+                  attachmentIds,
+                  outputModality: modality,
+                  generationOptions: genOptions,
+                });
               }}
               onStop={stream.stop}
             />
