@@ -2,7 +2,15 @@
 
 import { SlidersHorizontal } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import type { ChatLabGenerationOptions, ChatLabOutputModality } from '@/schemas/chatLab';
 
 // The media-generation options popover: aspect ratio + resolution (both
@@ -15,9 +23,32 @@ import type { ChatLabGenerationOptions, ChatLabOutputModality } from '@/schemas/
 // and maps back to '' at the boundary.
 const AUTO = 'auto';
 
-const ASPECT_RATIOS = ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3'];
+// Aspect ratios grouped by orientation so portrait/landscape are easy to find
+// (e.g. Sora's portrait vs landscape). Widest→squarest within each section.
+const ASPECT_GROUPS: { label: string; ratios: string[] }[] = [
+  { label: 'Landscape', ratios: ['16:9', '3:2', '4:3'] },
+  { label: 'Square', ratios: ['1:1'] },
+  { label: 'Portrait', ratios: ['9:16', '2:3', '3:4'] },
+];
+
 const IMAGE_RESOLUTIONS = ['512', '1K', '2K', '4K'];
 const VIDEO_RESOLUTIONS = ['480p', '720p', '1080p'];
+
+// A small box drawn to the EXACT aspect ratio it labels: the longer side fills
+// a 16px square box, the shorter side scales proportionally — so 16:9 is a wide
+// rectangle, 9:16 a tall one, 3:4 slightly tall, 1:1 a square. `currentColor`
+// so it tracks the row's text color (incl. the selected/hover states).
+function AspectRatioIcon({ ratio }: { ratio: string }) {
+  const [w, h] = ratio.split(':').map(Number);
+  const box = 16;
+  const width = w >= h ? box : Math.round((w / h) * box);
+  const height = h >= w ? box : Math.round((h / w) * box);
+  return (
+    <span className="flex size-4 shrink-0 items-center justify-center" aria-hidden>
+      <span className="rounded-[2px] border border-current" style={{ width, height }} />
+    </span>
+  );
+}
 
 interface GenerationOptionsProps {
   modality: Exclude<ChatLabOutputModality, 'text'>;
@@ -63,10 +94,18 @@ export default function GenerationOptions({ modality, value, onChange, disabled 
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={AUTO}>Auto</SelectItem>
-              {ASPECT_RATIOS.map((r) => (
-                <SelectItem key={r} value={r}>
-                  {r}
-                </SelectItem>
+              {ASPECT_GROUPS.map((g) => (
+                <SelectGroup key={g.label}>
+                  <SelectLabel>{g.label}</SelectLabel>
+                  {g.ratios.map((r) => (
+                    <SelectItem key={r} value={r}>
+                      <span className="flex items-center gap-2">
+                        <AspectRatioIcon ratio={r} />
+                        {r}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
               ))}
             </SelectContent>
           </Select>
