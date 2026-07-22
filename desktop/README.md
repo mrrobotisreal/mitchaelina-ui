@@ -17,8 +17,11 @@ Next.js build. Nothing here is part of the Vercel build — the root
 ## Prerequisites
 
 - Node 18+ and npm.
-- Building macOS artifacts requires macOS; building Windows artifacts is
-  easiest on Windows (cross-building `.dmg`/`.nsis` off-platform is finicky).
+- **A `.dmg` can only be built on macOS.** DMG assembly relies on macOS-only
+  tooling (`hdiutil`, the `dmg-license` native module), which does not exist on
+  Linux/Windows — `npm run dist:mac` on Linux fails with
+  `Cannot find module 'dmg-license'`. That is expected, not a misconfiguration.
+  Windows `.nsis` installers are likewise easiest to build on Windows.
 - No code signing / notarization is configured yet (see the note at the
   bottom).
 
@@ -28,12 +31,29 @@ Next.js build. Nothing here is part of the Vercel build — the root
 cd ui/desktop
 npm install
 npm run icons        # regenerate build/icon.png from ../public/avatar.webp (committed; only needed if the avatar changes)
-npm run dist:mac     # macOS: .dmg + .zip for arm64 AND x64
-# or
-npm run dist:win     # Windows: NSIS installer (x64)
+
+# On macOS — the full mac artifacts (.dmg + .zip, arm64 AND x64):
+npm run dist:mac
+
+# On Windows — the NSIS installer (x64):
+npm run dist:win
 ```
 
 Artifacts land in **`ui/desktop/dist/`** (git-ignored).
+
+### Building on Linux (this workstation)
+
+You cannot produce a `.dmg` here (see Prerequisites). You *can* still produce
+an **unsigned macOS `.zip`** — electron-builder lays out the `.app` from the
+downloaded mac Electron binary and zips it; only the DMG step is macOS-only:
+
+```bash
+npm run dist:mac-zip     # mac .zip only (arm64 + x64), unsigned
+```
+
+The `.app` inside is unsigned, so the first launch on a Mac needs
+right-click → **Open** (see the bottom note). For a distributable, signed
+`.dmg`, build on a Mac.
 
 ## Icon pipeline
 

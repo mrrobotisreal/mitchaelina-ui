@@ -3,11 +3,13 @@
   "version": "1.0.0",
   "private": true,
   "description": "Mitchaelina desktop shell (Electron) — wraps the deployed web app at www.mitchaelina.com.",
+  "author": "creatv",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "icons": "node scripts/make-icons.mjs",
     "dist:mac": "electron-builder --mac --arm64 --x64",
+    "dist:mac-zip": "electron-builder --mac zip --arm64 --x64",
     "dist:win": "electron-builder --win --x64"
   },
   "devDependencies": {
