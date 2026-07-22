@@ -121,6 +121,8 @@ export default function ChatLabSession({ sessionId }: { sessionId: string }) {
         stream={stream}
         emptyState={emptyState}
         isLoading={sessionQuery.isLoading}
+        onApproveLocalTool={stream.approveLocalTool}
+        onDenyLocalTool={stream.denyLocalTool}
       />
       <div className="border-t border-border bg-background p-3">
         <div className="mx-auto w-full max-w-3xl">
@@ -151,7 +153,7 @@ export default function ChatLabSession({ sessionId }: { sessionId: string }) {
               onGenerationOptionsChange={setGenOptions}
               isStreaming={stream.isStreaming}
               assetHint={assetHint}
-              onSend={(content, attachmentIds) => {
+              onSend={(content, attachmentIds, local) => {
                 if (!model) return;
                 void stream.sendMessage({
                   sessionId,
@@ -161,6 +163,9 @@ export default function ChatLabSession({ sessionId }: { sessionId: string }) {
                   attachmentIds,
                   outputModality: modality,
                   generationOptions: genOptions,
+                  localTools: local?.localTools,
+                  localContext: local?.localContext,
+                  localEnv: local?.localEnv,
                 });
               }}
               onStop={stream.stop}

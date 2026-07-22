@@ -23,6 +23,7 @@ import type { ChatLabAttachment, ChatLabMessage, ChatLabToolActivity } from '@/s
 import type { ChatStreamState, ChatStreamToolEvent } from '@/lib/chatlab/useChatStream';
 import ChatLabMarkdown, { CopyButton } from './markdown';
 import MessageFeedback from './message-feedback';
+import LocalToolCard, { isLocalToolName, type LocalToolCardData } from './local-tool-card';
 
 // The conversation pane: persisted messages + the optimistic pending user
 // message + the live streaming assistant block.
@@ -39,6 +40,9 @@ interface MessageListProps {
   stream: ChatStreamState;
   emptyState: React.ReactNode;
   isLoading: boolean;
+  /** Desktop local-tool approval callbacks (from useChatStream). */
+  onApproveLocalTool?: (callId: string, opts?: { always?: boolean }) => void;
+  onDenyLocalTool?: (callId: string) => void;
 }
 
 function formatCost(usd: number): string {
@@ -227,6 +231,25 @@ function ToolChips({ items }: { items: Array<ChatStreamToolEvent | ChatLabToolAc
   );
 }
 
+// Map a persisted toolActivity row (local-tool kind) to the card's shape.
+function activityToCardData(t: ChatLabToolActivity): LocalToolCardData {
+  return { name: t.name, path: t.path, command: t.command, status: t.status, detail: t.detail, diff: t.diff };
+}
+
+// Split a message's toolActivity into read_asset chips vs local-tool cards.
+function ToolActivity({ items }: { items: ChatLabToolActivity[] }) {
+  const chips = items.filter((t) => !isLocalToolName(t.name));
+  const cards = items.filter((t) => isLocalToolName(t.name));
+  return (
+    <>
+      {chips.length > 0 && <ToolChips items={chips} />}
+      {cards.map((t, i) => (
+        <LocalToolCard key={`${t.name}-${i}`} data={activityToCardData(t)} />
+      ))}
+    </>
+  );
+}
+
 function UserBubble({ content, attachments }: { content: string; attachments?: ChatLabAttachment[] }) {
   return (
     <div className="flex flex-col items-end px-4 py-2">
@@ -290,7 +313,7 @@ function AssistantMessage({ message, sessionId }: { message: ChatLabMessage; ses
         )}
       </div>
 
-      {message.toolActivity && <ToolChips items={message.toolActivity} />}
+      {message.toolActivity && <ToolActivity items={message.toolActivity} />}
       {message.reasoning && <ReasoningBlock text={message.reasoning} />}
 
       {message.content ? (
@@ -325,7 +348,15 @@ function AssistantMessage({ message, sessionId }: { message: ChatLabMessage; ses
 
 // The live streaming assistant block: collapsible reasoning (auto-collapsed
 // once the answer starts) above the streaming markdown, with a blinking cursor.
-function StreamingAssistant({ stream }: { stream: ChatStreamState }) {
+function StreamingAssistant({
+  stream,
+  onApproveLocalTool,
+  onDenyLocalTool,
+}: {
+  stream: ChatStreamState;
+  onApproveLocalTool?: (callId: string, opts?: { always?: boolean }) => void;
+  onDenyLocalTool?: (callId: string) => void;
+}) {
   const [reasoningOpen, setReasoningOpen] = useState(true);
   const collapsedOnce = useRef(false);
   useEffect(() => {
@@ -352,6 +383,21 @@ function StreamingAssistant({ stream }: { stream: ChatStreamState }) {
       </div>
 
       <ToolChips items={stream.toolEvents} />
+      {stream.localToolCalls.map((call) => (
+        <LocalToolCard
+          key={call.callId}
+          data={{
+            name: call.name,
+            status: call.status,
+            summary: call.summary,
+            detail: call.detail,
+            diff: call.diff,
+            args: call.args,
+          }}
+          onApprove={(opts) => onApproveLocalTool?.(call.callId, opts)}
+          onDeny={() => onDenyLocalTool?.(call.callId)}
+        />
+      ))}
       {stream.reasoningText && (
         <ReasoningBlock text={stream.reasoningText} open={reasoningOpen} onOpenChange={setReasoningOpen} live />
       )}
@@ -365,7 +411,8 @@ function StreamingAssistant({ stream }: { stream: ChatStreamState }) {
         </div>
       ) : (
         !stream.reasoningText &&
-        stream.toolEvents.length === 0 && (
+        stream.toolEvents.length === 0 &&
+        stream.localToolCalls.length === 0 && (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="size-3.5 animate-spin" />
             {stream.generation
@@ -392,7 +439,15 @@ function StreamingAssistant({ stream }: { stream: ChatStreamState }) {
   );
 }
 
-export default function MessageList({ sessionId, messages, stream, emptyState, isLoading }: MessageListProps) {
+export default function MessageList({
+  sessionId,
+  messages,
+  stream,
+  emptyState,
+  isLoading,
+  onApproveLocalTool,
+  onDenyLocalTool,
+}: MessageListProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
   const rafRef = useRef<number | null>(null);
@@ -456,7 +511,13 @@ export default function MessageList({ sessionId, messages, stream, emptyState, i
             ),
           )}
           {stream.pendingUser && <UserBubble content={stream.pendingUser.content} />}
-          {streaming && <StreamingAssistant stream={stream} />}
+          {streaming && (
+            <StreamingAssistant
+              stream={stream}
+              onApproveLocalTool={onApproveLocalTool}
+              onDenyLocalTool={onDenyLocalTool}
+            />
+          )}
         </div>
       )}
     </div>

@@ -1,9 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, Paperclip, Send, Square, X } from 'lucide-react';
+import { FileText, FolderOpen, Loader2, Paperclip, Send, Square, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { isMentionRead, useDesktop, type DesktopSearchResult } from '@/lib/desktop';
+import LocalAccessDialog from './local-access-dialog';
 import {
   CHATLAB_MAX_ATTACHMENTS,
   chatLabAccept,
@@ -49,6 +51,41 @@ const MODALITY_LABEL: Record<ChatLabOutputModality, string> = {
 // frames, never files).
 const GENERATION_IMAGE_ACCEPT = 'image/png,image/jpeg,image/webp,image/gif';
 
+/** Desktop-only local file-access payload attached to a send. */
+export interface LocalSendPayload {
+  localTools: boolean;
+  localContext: { path: string; content: string }[];
+  localEnv: { platform: string; roots: string[] };
+}
+
+/** One @-mentioned file/directory pill. `error` marks a read that failed at
+ *  send time (oversize / outside roots) — surfaced, never blocks the send. */
+interface MentionPill {
+  path: string;
+  isDir: boolean;
+  error?: boolean;
+}
+
+// Detect an active "@token" ending at the caret: the nearest '@' that is at the
+// start or preceded by whitespace, with no whitespace between it and the caret.
+// Returns the token text + its start index, or null when no mention is active.
+function detectMention(text: string, caret: number): { token: string; start: number } | null {
+  const upto = text.slice(0, caret);
+  const at = upto.lastIndexOf('@');
+  if (at === -1) return null;
+  if (at > 0 && !/\s/.test(upto[at - 1])) return null; // '@' must start a word
+  const token = upto.slice(at + 1);
+  if (/\s/.test(token)) return null; // whitespace ends the mention
+  return { token, start: at };
+}
+
+// Short display name for a mention pill (basename, dirs keep a trailing slash).
+function mentionLabel(pill: MentionPill): string {
+  const trimmed = pill.path.replace(/\/+$/, '');
+  const base = trimmed.split(/[\\/]/).pop() || pill.path;
+  return pill.isDir ? `${base}/` : base;
+}
+
 interface PendingAttachment {
   localId: number;
   file: File;
@@ -77,7 +114,7 @@ interface ComposerProps {
   isStreaming: boolean;
   /** Project chat + assets present + selected model can't call tools. */
   assetHint?: boolean;
-  onSend: (content: string, attachmentIds: string[]) => void;
+  onSend: (content: string, attachmentIds: string[], local?: LocalSendPayload) => void;
   onStop: () => void;
 }
 
@@ -115,6 +152,22 @@ export default function Composer({
   // mutation the server rejects under view-as, so the whole composer is
   // disabled (belt; the API is the suspenders).
   const { viewingAs } = useViewAs();
+
+  // Desktop local file access — null on the web (feature stays dormant).
+  const desktop = useDesktop();
+
+  // @-mention state (desktop only). `mentions` are the selected pills; the
+  // autocomplete panel is active whenever mentionQuery !== null.
+  const [mentions, setMentions] = useState<MentionPill[]>([]);
+  const mentionsRef = useRef<MentionPill[]>([]);
+  useEffect(() => {
+    mentionsRef.current = mentions;
+  }, [mentions]);
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionStart, setMentionStart] = useState<number>(-1);
+  const [mentionResults, setMentionResults] = useState<DesktopSearchResult[]>([]);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [localDialogOpen, setLocalDialogOpen] = useState(false);
 
   const selectedModel = models.find((m) => m.id === model) ?? null;
   const modalities = useMemo(() => modelModalities(selectedModel), [selectedModel]);
@@ -248,22 +301,136 @@ export default function Composer({
     });
   };
 
+  // --- @ mentions (desktop only) --------------------------------------------
+  const closeMentionPanel = useCallback(() => {
+    setMentionQuery(null);
+    setMentionStart(-1);
+    setMentionResults([]);
+    setMentionIndex(0);
+  }, []);
+
+  // Recompute the active "@token" from the textarea's current value + caret.
+  const syncMention = useCallback(() => {
+    if (!desktop || isGeneration) {
+      closeMentionPanel();
+      return;
+    }
+    const el = textareaRef.current;
+    if (!el) return;
+    const caret = el.selectionStart ?? el.value.length;
+    const found = detectMention(el.value, caret);
+    if (!found) {
+      closeMentionPanel();
+      return;
+    }
+    setMentionQuery(found.token);
+    setMentionStart(found.start);
+  }, [desktop, isGeneration, closeMentionPanel]);
+
+  // Debounced fuzzy search as the mention query changes.
+  useEffect(() => {
+    if (mentionQuery === null || !desktop) return;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const results = await desktop.searchFiles(mentionQuery, 12);
+        if (!cancelled) {
+          setMentionResults(results);
+          setMentionIndex(0);
+        }
+      } catch {
+        if (!cancelled) setMentionResults([]);
+      }
+    }, 80);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [mentionQuery, desktop]);
+
+  // Insert a selected result as a pill and strip the "@token" from the text.
+  const selectMention = useCallback(
+    (result: DesktopSearchResult) => {
+      const el = textareaRef.current;
+      if (!el || mentionStart < 0) return;
+      const caret = el.selectionStart ?? el.value.length;
+      const next = text.slice(0, mentionStart) + text.slice(caret);
+      setText(next);
+      setMentions((prev) =>
+        prev.some((m) => m.path === result.path) ? prev : [...prev, { path: result.path, isDir: result.isDir }],
+      );
+      closeMentionPanel();
+      requestAnimationFrame(() => {
+        const node = textareaRef.current;
+        if (node) {
+          node.focus();
+          node.selectionStart = node.selectionEnd = mentionStart;
+        }
+      });
+    },
+    [text, mentionStart, closeMentionPanel],
+  );
+
+  const removeMention = useCallback((path: string) => {
+    setMentions((prev) => prev.filter((m) => m.path !== path));
+  }, []);
+
+  const panelOpen = mentionQuery !== null && mentionResults.length > 0;
+
   // Generation always needs a text prompt; text chat can send on attachments
   // alone.
   const hasContent = isGeneration
     ? text.trim().length > 0
-    : text.trim().length > 0 || readyAttachments.length > 0;
+    : text.trim().length > 0 || readyAttachments.length > 0 || mentions.length > 0;
   const canSend = !isStreaming && !uploading && !visionBlocked && !!model && hasContent && !viewingAs;
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!canSend || !model) return;
     const ids = readyAttachments.map((a) => a.attachmentId as string);
-    onSend(text, ids);
+
+    // Desktop text send: read @-mention contents + gather granted roots.
+    let local: LocalSendPayload | undefined;
+    if (desktop && !isGeneration) {
+      let roots: string[] = [];
+      try {
+        roots = await desktop.listRoots();
+      } catch {
+        roots = [];
+      }
+      const localContext: { path: string; content: string }[] = [];
+      const pills = mentionsRef.current;
+      for (const pill of pills) {
+        try {
+          const res = await desktop.readMention(pill.path);
+          if (isMentionRead(res)) {
+            localContext.push({ path: pill.path, content: res.content });
+          } else {
+            setMentions((prev) => prev.map((m) => (m.path === pill.path ? { ...m, error: true } : m)));
+          }
+        } catch {
+          setMentions((prev) => prev.map((m) => (m.path === pill.path ? { ...m, error: true } : m)));
+        }
+      }
+      local = {
+        localTools: !!selectedModel?.supportsTools,
+        localContext,
+        localEnv: { platform: desktop.platform, roots },
+      };
+      // Nudge the user to grant a folder when they @-mentioned or a tool-capable
+      // model has nothing to work with.
+      if ((pills.length > 0 || selectedModel?.supportsTools) && roots.length === 0) {
+        setLocalDialogOpen(true);
+      }
+    }
+
+    onSend(text, ids, local);
     for (const a of attachmentsRef.current) {
       if (a.previewUrl) URL.revokeObjectURL(a.previewUrl);
     }
     setAttachments([]);
     setText('');
+    setMentions([]);
+    closeMentionPanel();
     textareaRef.current?.focus();
   };
 
@@ -303,16 +470,98 @@ export default function Composer({
         </div>
       )}
 
+      {/* @-mention pills (desktop only) */}
+      {mentions.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 border-b border-border p-2">
+          {mentions.map((m) => (
+            <span
+              key={m.path}
+              className={cn(
+                'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs',
+                m.error ? 'border-destructive/50 text-destructive' : 'border-border bg-muted/40 text-foreground',
+              )}
+              title={m.error ? `${m.path} — could not be read` : m.path}
+            >
+              {m.isDir ? <FolderOpen className="size-3" /> : <FileText className="size-3" />}
+              {mentionLabel(m)}
+              <button
+                type="button"
+                onClick={() => removeMention(m.path)}
+                className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                aria-label={`Remove ${m.path}`}
+              >
+                <X className="size-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* Textarea */}
-      <div className="px-3 pt-2">
+      <div className="relative px-3 pt-2">
+        {/* @-mention autocomplete panel (above the textarea) */}
+        {panelOpen && (
+          <div className="absolute bottom-full left-2 z-20 mb-1 max-h-64 w-[min(28rem,calc(100%-1rem))] overflow-y-auto rounded-lg border border-border bg-popover p-1 shadow-lg">
+            {mentionResults.map((r, i) => (
+              <button
+                key={r.path}
+                type="button"
+                onMouseEnter={() => setMentionIndex(i)}
+                onMouseDown={(e) => {
+                  e.preventDefault(); // keep textarea focus
+                  selectMention(r);
+                }}
+                className={cn(
+                  'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs',
+                  i === mentionIndex ? 'bg-accent text-foreground' : 'text-muted-foreground',
+                )}
+              >
+                {r.isDir ? (
+                  <FolderOpen className="size-3.5 shrink-0" />
+                ) : (
+                  <FileText className="size-3.5 shrink-0" />
+                )}
+                <span className="truncate font-mono">{r.path}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            syncMention();
+          }}
+          onKeyUp={syncMention}
+          onClick={syncMention}
           onKeyDown={(e) => {
+            if (panelOpen) {
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setMentionIndex((i) => Math.min(i + 1, mentionResults.length - 1));
+                return;
+              }
+              if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                setMentionIndex((i) => Math.max(i - 1, 0));
+                return;
+              }
+              if (e.key === 'Enter' || e.key === 'Tab') {
+                e.preventDefault();
+                const chosen = mentionResults[mentionIndex];
+                if (chosen) selectMention(chosen);
+                return;
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                closeMentionPanel();
+                return;
+              }
+            }
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
-              handleSend();
+              void handleSend();
             }
           }}
           rows={1}
@@ -322,7 +571,9 @@ export default function Composer({
               ? 'Read-only while viewing another user'
               : isGeneration
                 ? `Describe the ${outputModality} to generate… (Enter to send)`
-                : 'Message the model… (Enter to send, Shift+Enter for a new line)'
+                : desktop
+                  ? 'Message the model… (@ to mention a local file, Enter to send)'
+                  : 'Message the model… (Enter to send, Shift+Enter for a new line)'
           }
           className="max-h-60 min-h-[2.5rem] w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
         />
@@ -346,6 +597,18 @@ export default function Composer({
         >
           <Paperclip className="size-4" />
         </button>
+        {desktop && !isGeneration && (
+          <button
+            type="button"
+            onClick={() => setLocalDialogOpen(true)}
+            disabled={viewingAs}
+            className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Local folder access"
+            title="Grant local folder access for @-mentions and file editing"
+          >
+            <FolderOpen className="size-4" />
+          </button>
+        )}
         <ModelPicker
           models={models}
           value={model}
@@ -436,6 +699,12 @@ export default function Composer({
           This model can&apos;t read project assets on demand — text assets are inlined, other assets unavailable.
         </p>
       )}
+      {desktop && !isGeneration && !!selectedModel && !selectedModel.supportsTools && (
+        <p className="px-3 pb-2 text-[11px] text-muted-foreground">
+          {selectedModel.name} can&apos;t use local tools — @-mentioned files are still sent as context, but it
+          can&apos;t read or edit files on its own. Pick a tool-capable model for that.
+        </p>
+      )}
       {isGeneration && (
         <p className="px-3 pb-2 text-[11px] text-muted-foreground">
           {outputModality === 'video'
@@ -455,6 +724,8 @@ export default function Composer({
           e.target.value = '';
         }}
       />
+
+      {desktop && <LocalAccessDialog open={localDialogOpen} onOpenChange={setLocalDialogOpen} />}
     </div>
   );
 }

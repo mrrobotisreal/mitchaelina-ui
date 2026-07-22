@@ -1,6 +1,6 @@
 {
   "name": "mitchaelina-desktop",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Mitchaelina desktop shell (Electron) — wraps the deployed web app at www.mitchaelina.com.",
   "author": "creatv",
@@ -8,9 +8,15 @@
   "scripts": {
     "start": "electron .",
     "icons": "node scripts/make-icons.mjs",
+    "test": "node --test local/*.test.js",
     "dist:mac": "electron-builder --mac --arm64 --x64",
     "dist:mac-zip": "electron-builder --mac zip --arm64 --x64",
     "dist:win": "electron-builder --win --x64"
+  },
+  "dependencies": {
+    "diff": "^7.0.0",
+    "electron-updater": "^6.3.9",
+    "fuzzysort": "^3.1.0"
   },
   "devDependencies": {
     "electron": "^33.0.0",
@@ -25,10 +31,18 @@
     },
     "files": [
       "main.js",
+      "preload.js",
+      "local/**/*.js",
+      "!local/**/*.test.js",
       "build/icon.png"
     ],
     "mac": {
       "category": "public.app-category.productivity",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true,
       "target": [
         { "target": "dmg", "arch": ["arm64", "x64"] },
         { "target": "zip", "arch": ["arm64", "x64"] }
@@ -36,6 +50,12 @@
     },
     "win": {
       "target": "nsis"
-    }
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://api.mitchaelina.com/desktop"
+      }
+    ]
   }
 }

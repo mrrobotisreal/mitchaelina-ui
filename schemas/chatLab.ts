@@ -138,12 +138,21 @@ export const ChatLabAttachmentSchema = z.object({
 });
 export type ChatLabAttachment = z.infer<typeof ChatLabAttachmentSchema>;
 
-// One recorded read_asset execution on an assistant message.
+// One recorded tool execution on an assistant message. read_asset uses
+// assetId/assetName; the desktop local tools use the additive
+// path/command/detail/diff fields (all optional — existing read_asset rows keep
+// validating). assetId/assetName are relaxed to optional-with-default so local
+// tool rows (which carry neither) still parse.
 export const ChatLabToolActivitySchema = z.object({
   name: z.string(),
-  assetId: z.string(),
-  assetName: z.string(),
+  assetId: z.string().optional().default(''),
+  assetName: z.string().optional().default(''),
   status: z.enum(['ok', 'error']),
+  // Desktop local-tool fields (omitted for read_asset).
+  path: z.string().optional(),
+  command: z.string().optional(),
+  detail: z.string().optional(),
+  diff: z.string().optional(),
 });
 export type ChatLabToolActivity = z.infer<typeof ChatLabToolActivitySchema>;
 
@@ -306,6 +315,19 @@ export const ChatLabStreamEventSchema = z.discriminatedUnion('type', [
     modality: z.enum(['image', 'video']),
     status: z.enum(['running', 'polling', 'ok']),
   }),
+  // Desktop local agentic file access: a "pending" event asks the Electron
+  // renderer to execute a client-side tool call (identified by callId); the
+  // matching terminal event ("ok"/"error") carries the human summary and, for
+  // file writes/edits, a unified diff. Dormant on the web (never emitted).
+  z.object({
+    type: z.literal('local_tool'),
+    callId: z.string(),
+    name: z.string(),
+    args: z.string(), // raw JSON argument string
+    status: z.enum(['pending', 'ok', 'error']),
+    detail: z.string().optional(),
+    diff: z.string().optional(),
+  }),
   z.object({ type: z.literal('done'), status: z.string() }),
   z.object({ type: z.literal('error'), message: z.string() }),
 ]);
@@ -313,6 +335,7 @@ export type ChatLabStreamEvent = z.infer<typeof ChatLabStreamEventSchema>;
 
 export type ChatLabUsage = Extract<ChatLabStreamEvent, { type: 'usage' }>;
 export type ChatLabGenerationEvent = Extract<ChatLabStreamEvent, { type: 'generation' }>;
+export type ChatLabLocalToolEvent = Extract<ChatLabStreamEvent, { type: 'local_tool' }>;
 
 // ---------------------------------------------------------------------------
 // Media generation — send-side selection (mirrors the API's outputModality +

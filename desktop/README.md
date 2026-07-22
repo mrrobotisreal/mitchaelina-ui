@@ -7,7 +7,15 @@ server and no static export — it just loads the remote site in a native window
 **This means the desktop app tracks the web app automatically:** every Vercel
 deploy — including the per-user privacy / admin view-as features — ships to
 desktop with no rebuild here. You only rebuild the desktop app to change the
-shell itself (window chrome, icon, menu).
+shell itself (window chrome, icon, menu) or the **local agentic file access**
+bridge below.
+
+> **Desktop releases are now required for native changes.** The local file
+> access feature adds a preload bridge (`preload.js`) and a main-process tool
+> engine (`local/`). Because those run natively, changes to `main.js`,
+> `preload.js`, or anything under `local/` require cutting a new desktop
+> release — they do NOT ship via Vercel. Purely web-only changes still ship
+> automatically through Vercel as before.
 
 This package is intentionally **self-contained** (its own `package.json` and
 `node_modules`) so its `electron-builder` config never collides with the
@@ -86,6 +94,67 @@ Without `ELECTRON_START_URL` the shell loads the production site.
 The renderer runs with `contextIsolation: true`, `nodeIntegration: false`, and
 `sandbox: true`, and only ever loads a remote URL. External links open in the
 user's default browser (`shell.openExternal`); in-app popups are denied.
+
+## Local agentic file access
+
+The desktop shell lets a tool-capable model read and edit files on the user's
+machine — but only within folders the user has explicitly granted, and only
+through a tightly-guarded bridge.
+
+### Trust model
+
+The renderer is a **remotely-loaded web page** — treat it as semi-trusted. The
+Electron **main process is the sole enforcement point**; the renderer and the
+server never touch raw filesystem/exec:
+
+- **Origin-checked IPC.** Every `ipcMain.handle` is wrapped in `guardIpc`
+  (`local/ipc.js`), which rejects any call whose sender frame is not on the
+  app's own origin (`isAppOrigin` in `local/paths.js`).
+- **Granted-roots containment.** Every tool path and every `run_command`
+  working directory is `realpath`'d and required to sit inside a granted root
+  (`resolveWithin`/`containedIn`). Not-yet-existing write targets realpath their
+  deepest existing ancestor, so a symlinked parent can't be used to escape.
+  Violations return an error *result*, never an exception.
+- **Approval policy re-evaluated in main.** `executeTool` re-runs the policy
+  and refuses non-approved mutations even if the renderer claims `approved`.
+
+### Granted roots
+
+Users grant folders via the native directory picker (**Local access** button
+by the composer). Roots are stored realpath'd in
+`app.getPath('userData')/local-roots.json` and persist across launches.
+
+### Approval classes (`local/policy.js`)
+
+| Tool | Decision |
+| --- | --- |
+| `search_files`, `list_directory`, `read_file`, `grep_files` | **auto** (read-only) |
+| `edit_file`, `write_file` | **approve** (unless session always-allow for writes) |
+| `run_command` (allowlisted read-only: `ls`/`cat`/`git status`/… with no shell metacharacters) | **auto** |
+| `run_command` (anything else) | **approve** (unless session always-allow for commands) |
+| unknown | **deny** |
+
+"Session always-allow" is per-app-run and in memory only — there is **no
+global persistent auto-approve**. Every mutation needs explicit approval or a
+session always-allow the user granted earlier in that run.
+
+### Tests
+
+The trust-critical pure logic (origin check, containment boundary, command
+allowlist, policy decisions) is unit-tested without Electron:
+
+```bash
+npm test        # node --test local/*.test.js
+```
+
+## Auto-updates
+
+The app updates itself via `electron-updater` against a feed you publish to:
+background download → "Restart now / Later" (silent on Windows and on
+signed/notarized macOS; a "Download" fallback dialog on unsigned macOS). Bumping
+`version` in `package.json` is what triggers a release. Full details — hosting
+options, the macOS signing requirement, the release workflow, and testing — are
+in **[UPDATES.md](./UPDATES.md)**.
 
 ## Unsigned builds on macOS
 

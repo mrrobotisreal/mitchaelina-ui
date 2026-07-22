@@ -1,12 +1,13 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { getBaseURL } from '@/lib/utils';
 import { getCurrentIdToken } from '@/lib/firebase';
 import { extractSSERecords, parseSSERecordData } from '@/lib/sse';
 import { track } from '@/lib/analyticsClient';
+import { getDesktop, isToolEvaluation } from '@/lib/desktop';
 import { chatLabKeys, projectKeys } from './useChatLab';
 import {
   ChatLabStreamEventSchema,
@@ -47,12 +48,25 @@ export interface ChatStreamToolEvent {
   status: 'running' | 'ok' | 'error';
 }
 
+/** One in-stream desktop local tool call, for the live tool cards. Progresses
+ *  pending → (awaiting-approval) → running → ok|error. */
+export interface ChatStreamLocalToolCall {
+  callId: string;
+  name: string;
+  args: string; // raw JSON argument string
+  status: 'pending' | 'awaiting-approval' | 'running' | 'ok' | 'error';
+  summary?: string;
+  detail?: string;
+  diff?: string;
+}
+
 export interface ChatStreamState {
   status: ChatStreamStatus;
   pendingUser: PendingUserMessage | null;
   assistantText: string;
   reasoningText: string;
   toolEvents: ChatStreamToolEvent[];
+  localToolCalls: ChatStreamLocalToolCall[];
   usage: ChatLabUsage | null;
   error: string | null;
   model: string | null;
@@ -71,6 +85,7 @@ const IDLE: ChatStreamState = {
   assistantText: '',
   reasoningText: '',
   toolEvents: [],
+  localToolCalls: [],
   usage: null,
   error: null,
   model: null,
@@ -89,6 +104,14 @@ export interface SendMessageParams {
   outputModality: ChatLabOutputModality;
   /** Optional generation knobs (ignored for text). */
   generationOptions?: ChatLabGenerationOptions;
+  /** Desktop only: enable the client-executed local tool suite (the server
+   *  force-disables it for non-tool models / generation / view-as). */
+  localTools?: boolean;
+  /** Desktop only: @-mentioned files (content read client-side) sent as
+   *  up-front context. */
+  localContext?: { path: string; content: string }[];
+  /** Desktop only: platform + granted roots, for the local-tools system prompt. */
+  localEnv?: { platform: string; roots: string[] };
 }
 
 // Drop empty option fields so the request carries only real overrides (the
@@ -102,10 +125,155 @@ function cleanGenerationOptions(o?: ChatLabGenerationOptions): ChatLabGeneration
   return Object.keys(out).length > 0 ? out : null;
 }
 
+// updateLocalToolCall patches one call entry by callId (functional-update safe).
+function updateLocalToolCall(
+  s: ChatStreamState,
+  callId: string,
+  patch: Partial<ChatStreamLocalToolCall>,
+): ChatStreamState {
+  return {
+    ...s,
+    localToolCalls: s.localToolCalls.map((c) => (c.callId === callId ? { ...c, ...patch } : c)),
+  };
+}
+
+// The session-scoped always-allow class a tool belongs to (for "Always allow").
+function alwaysAllowKind(name: string): 'writes' | 'commands' | null {
+  if (name === 'edit_file' || name === 'write_file') return 'writes';
+  if (name === 'run_command') return 'commands';
+  return null;
+}
+
 export function useChatStream(sessionId: string) {
   const qc = useQueryClient();
   const [state, setState] = useState<ChatStreamState>(IDLE);
   const controllerRef = useRef<AbortController | null>(null);
+  // Mirror of the live local tool calls so the approve/deny callbacks can read
+  // a call's name/args without threading them through the UI.
+  const localCallsRef = useRef<ChatStreamLocalToolCall[]>([]);
+  useEffect(() => {
+    localCallsRef.current = state.localToolCalls;
+  }, [state.localToolCalls]);
+
+  // POST one local tool result back to the suspended send goroutine. Best
+  // effort: a 409 (call no longer pending, e.g. after a server-side timeout) or
+  // any network error is swallowed — the stream reconciles regardless.
+  const postLocalToolResult = useCallback(
+    async (body: { callId: string; ok: boolean; resultText: string; detail: string; diff: string }) => {
+      try {
+        const token = await getCurrentIdToken();
+        if (!token) return;
+        await fetch(`${getBaseURL()}/chatlab/sessions/${encodeURIComponent(sessionId)}/local-tool-results`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      } catch {
+        // ignore — the server times out and the loop continues
+      }
+    },
+    [sessionId],
+  );
+
+  // Execute a tool via the desktop bridge (approved = the user clicked Approve,
+  // honored only for approve-class decisions in main) and POST the result.
+  const runAndPost = useCallback(
+    async (call: { callId: string; name: string; args: string }, approved: boolean) => {
+      setState((s) => updateLocalToolCall(s, call.callId, { status: 'running' }));
+      const bridge = getDesktop();
+      let result: { ok: boolean; resultText: string; detail?: string; diff?: string };
+      if (!bridge) {
+        result = { ok: false, resultText: 'The desktop bridge is unavailable.', detail: 'no bridge' };
+      } else {
+        try {
+          result = await bridge.executeTool(call.name, call.args, { approved });
+        } catch {
+          result = { ok: false, resultText: 'The local tool failed to execute.', detail: 'error' };
+        }
+      }
+      await postLocalToolResult({
+        callId: call.callId,
+        ok: result.ok,
+        resultText: result.resultText,
+        detail: result.detail ?? '',
+        diff: result.diff ?? '',
+      });
+      setState((s) =>
+        updateLocalToolCall(s, call.callId, {
+          status: result.ok ? 'ok' : 'error',
+          detail: result.detail,
+          diff: result.diff,
+        }),
+      );
+    },
+    [postLocalToolResult],
+  );
+
+  // Handle a "pending" local_tool event: append the card, evaluate the policy,
+  // then auto-run (read-only), await approval (mutations), or refuse (deny /
+  // no bridge). Never throws — every failure becomes a posted error result so
+  // the server never hangs.
+  const handleLocalToolPending = useCallback(
+    async (ev: { callId: string; name: string; args: string }) => {
+      setState((s) => ({
+        ...s,
+        localToolCalls: [...s.localToolCalls, { callId: ev.callId, name: ev.name, args: ev.args, status: 'pending' }],
+      }));
+      const bridge = getDesktop();
+      if (!bridge) {
+        // Stale/misconfigured client: post an error result immediately so the
+        // model can react rather than the turn hanging until timeout.
+        await runAndPost(ev, false);
+        return;
+      }
+      let evaluation;
+      try {
+        evaluation = await bridge.evaluateTool(ev.name, ev.args);
+      } catch {
+        evaluation = null;
+      }
+      if (!evaluation || !isToolEvaluation(evaluation)) {
+        await postLocalToolResult({ callId: ev.callId, ok: false, resultText: 'User denied this action.', detail: '', diff: '' });
+        setState((s) => updateLocalToolCall(s, ev.callId, { status: 'error', detail: 'unavailable' }));
+        return;
+      }
+      setState((s) => updateLocalToolCall(s, ev.callId, { summary: evaluation.summary }));
+      if (evaluation.decision === 'auto') {
+        await runAndPost(ev, false);
+      } else if (evaluation.decision === 'approve') {
+        setState((s) => updateLocalToolCall(s, ev.callId, { status: 'awaiting-approval' }));
+      } else {
+        await postLocalToolResult({ callId: ev.callId, ok: false, resultText: 'User denied this action.', detail: '', diff: '' });
+        setState((s) => updateLocalToolCall(s, ev.callId, { status: 'error', detail: 'denied' }));
+      }
+    },
+    [postLocalToolResult, runAndPost],
+  );
+
+  // Approve an awaiting-approval call (optionally granting a session-scoped
+  // always-allow for its class); deny refuses it. Exposed to the tool cards.
+  const approveLocalTool = useCallback(
+    async (callId: string, opts?: { always?: boolean }) => {
+      const call = localCallsRef.current.find((c) => c.callId === callId);
+      if (!call || call.status !== 'awaiting-approval') return;
+      if (opts?.always) {
+        const kind = alwaysAllowKind(call.name);
+        if (kind) void getDesktop()?.setSessionAutoApprove(kind, true);
+      }
+      await runAndPost(call, true);
+    },
+    [runAndPost],
+  );
+
+  const denyLocalTool = useCallback(
+    async (callId: string) => {
+      const call = localCallsRef.current.find((c) => c.callId === callId);
+      if (!call || call.status !== 'awaiting-approval') return;
+      await postLocalToolResult({ callId, ok: false, resultText: 'User denied this action.', detail: '', diff: '' });
+      setState((s) => updateLocalToolCall(s, callId, { status: 'error', detail: 'denied' }));
+    },
+    [postLocalToolResult],
+  );
 
   const invalidate = useCallback(async () => {
     await Promise.all([
@@ -179,6 +347,10 @@ export function useChatStream(sessionId: string) {
             outputModality: params.outputModality,
             generationOptions:
               params.outputModality === 'text' ? null : cleanGenerationOptions(params.generationOptions),
+            // Desktop local file access (omitted/false on the web).
+            localTools: params.localTools ?? false,
+            localContext: params.localContext ?? [],
+            localEnv: params.localEnv ?? null,
           }),
           signal: controller.signal,
         });
@@ -243,6 +415,22 @@ export function useChatStream(sessionId: string) {
                   return { ...s, toolEvents: [...events, parsed] };
                 });
                 break;
+              case 'local_tool':
+                if (parsed.status === 'pending') {
+                  // Fire-and-forget: the SSE reader must keep draining while
+                  // the client executes (or waits for approval) — the server is
+                  // blocked on our result POST.
+                  void handleLocalToolPending(parsed);
+                } else {
+                  // Terminal echo from the server (after it received our POST):
+                  // merge the server-capped detail/diff and confirm status.
+                  setState((s) => updateLocalToolCall(s, parsed.callId, {
+                    status: parsed.status,
+                    detail: parsed.detail,
+                    diff: parsed.diff,
+                  }));
+                }
+                break;
               case 'usage':
                 setState((s) => ({ ...s, usage: parsed }));
                 break;
@@ -276,7 +464,7 @@ export function useChatStream(sessionId: string) {
         await fail(message);
       }
     },
-    [invalidate, qc],
+    [invalidate, qc, handleLocalToolPending],
   );
 
   /** Abort the in-flight send (the Stop button). Safe to call when idle. */
@@ -284,5 +472,12 @@ export function useChatStream(sessionId: string) {
     controllerRef.current?.abort();
   }, []);
 
-  return { ...state, sendMessage, stop, isStreaming: state.status === 'streaming' };
+  return {
+    ...state,
+    sendMessage,
+    stop,
+    approveLocalTool,
+    denyLocalTool,
+    isStreaming: state.status === 'streaming',
+  };
 }

@@ -13,6 +13,8 @@
 
 const { app, BrowserWindow, Menu, shell } = require('electron');
 const path = require('node:path');
+const { registerLocalIpc } = require('./local/ipc');
+const { initAutoUpdate, checkForUpdatesManually } = require('./local/updater');
 
 // The site to load. ELECTRON_START_URL lets the dev loop point at a local
 // `next dev` server (http://localhost:3000); production uses the deployed app.
@@ -43,6 +45,9 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // The preload exposes ONLY window.mitchaelinaDesktop (thin IPC wrappers).
+      // All filesystem/exec enforcement lives in main (see local/ipc.js).
+      preload: path.join(__dirname, 'preload.js'),
     },
   });
 
@@ -85,8 +90,32 @@ function createWindow() {
 // platforms once we call setApplicationMenu).
 function buildMenu() {
   const isMac = process.platform === 'darwin';
+  const checkForUpdatesItem = {
+    label: 'Check for Updates…',
+    click: () => checkForUpdatesManually(),
+  };
   const template = [
-    ...(isMac ? [{ role: 'appMenu' }] : []),
+    // On macOS the "Check for Updates…" item conventionally lives in the app
+    // menu, just under "About"; elsewhere it goes in Help.
+    ...(isMac
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: 'about' },
+              checkForUpdatesItem,
+              { type: 'separator' },
+              { role: 'services' },
+              { type: 'separator' },
+              { role: 'hide' },
+              { role: 'hideOthers' },
+              { role: 'unhide' },
+              { type: 'separator' },
+              { role: 'quit' },
+            ],
+          },
+        ]
+      : []),
     { role: 'fileMenu' },
     { role: 'editMenu' },
     {
@@ -103,13 +132,23 @@ function buildMenu() {
       ],
     },
     { role: 'windowMenu' },
+    {
+      role: 'help',
+      submenu: [...(isMac ? [] : [checkForUpdatesItem])],
+    },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 app.whenReady().then(() => {
   buildMenu();
+  // Register the origin-guarded local-tools IPC handlers before any window
+  // loads. appOrigin is the single source of truth for the origin check.
+  registerLocalIpc(appOrigin);
   createWindow();
+
+  // Background auto-update (packaged builds only; see local/updater.js).
+  initAutoUpdate();
 
   // macOS: re-create a window when the dock icon is clicked and none are open.
   app.on('activate', () => {
