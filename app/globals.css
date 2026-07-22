@@ -12,8 +12,8 @@
  *
  * Three roles:
  *   - Emilys Candy — the "Mitchaelina" wordmark ONLY (the `font-brand` utility).
- *   - Mystery Quest — the default body font (`--font-sans`): every other piece
- *     of text in the app.
+ *   - Nunito — the default body font (`--font-sans`): every other piece of text
+ *     in the app. Variable, so real bold and true italics work.
  *   - JetBrains Mono — code only (`--font-mono`: <code>/<pre>/<kbd>/<samp> and
  *     the `font-mono` utility).
  */
@@ -25,12 +25,21 @@
   src: url("/fonts/EmilysCandy-Regular.ttf") format("truetype");
 }
 
+/* Nunito ships as a variable font (weight axis), so one face covers the whole
+ * weight range; a second declares the matching italic axis. */
 @font-face {
-  font-family: "Mystery Quest";
+  font-family: "Nunito";
   font-style: normal;
-  font-weight: 400;
+  font-weight: 200 1000;
   font-display: swap;
-  src: url("/fonts/Mystery_Quest/MysteryQuest-Regular.ttf") format("truetype");
+  src: url("/fonts/Nunito/Nunito-VariableFont_wght.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Nunito";
+  font-style: italic;
+  font-weight: 200 1000;
+  font-display: swap;
+  src: url("/fonts/Nunito/Nunito-Italic-VariableFont_wght.ttf") format("truetype");
 }
 
 /* JetBrains Mono ships as a variable font (weight axis), so one face covers the
@@ -51,7 +60,7 @@
 }
 
 @theme inline {
-  --font-sans: "Mystery Quest", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-sans: "Nunito", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --font-brand: "Emilys Candy", ui-sans-serif, system-ui, sans-serif;
   --radius-sm: calc(var(--radius) - 4px);
