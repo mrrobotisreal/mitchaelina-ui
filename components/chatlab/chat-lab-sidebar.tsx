@@ -41,6 +41,7 @@ import {
   useCreateChatLabSession,
   useDeleteChatLabProject,
 } from '@/lib/chatlab/useChatLab';
+import { useViewAs } from '@/lib/viewAs';
 import type { ChatLabProject, ChatLabSession } from '@/schemas/chatLab';
 import { groupByRecency } from './recency';
 import SessionRows from './session-rows';
@@ -64,6 +65,8 @@ export default function ChatLabSidebar({ onNavigate }: ChatLabSidebarProps) {
   const { data: sessions, isLoading } = useChatLabSessions();
   const { data: projects, isLoading: projectsLoading } = useChatLabProjects();
   const createSession = useCreateChatLabSession();
+  // Creating chats/projects are mutations — disabled while viewing another user.
+  const { viewingAs } = useViewAs();
 
   const activeSessionId = useMemo(() => pathname?.match(/\/c\/([^/?]+)/)?.[1] ?? null, [pathname]);
   const activeProjectId = useMemo(
@@ -76,6 +79,7 @@ export default function ChatLabSidebar({ onNavigate }: ChatLabSidebarProps) {
   const generalGroups = useMemo(() => groupByRecency(sessions ?? []), [sessions]);
 
   const handleNewChat = async () => {
+    if (viewingAs) return;
     try {
       const session = await createSession.mutateAsync(undefined);
       router.push(`/c/${session.id}`);
@@ -87,7 +91,12 @@ export default function ChatLabSidebar({ onNavigate }: ChatLabSidebarProps) {
 
   return (
     <nav className="flex h-full w-full flex-col p-2">
-      <Button onClick={() => void handleNewChat()} disabled={createSession.isPending} className="w-full justify-start gap-2">
+      <Button
+        onClick={() => void handleNewChat()}
+        disabled={createSession.isPending || viewingAs}
+        title={viewingAs ? 'Read-only while viewing another user' : undefined}
+        className="w-full justify-start gap-2"
+      >
         {createSession.isPending ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
         New Chat
       </Button>
@@ -102,10 +111,14 @@ export default function ChatLabSidebar({ onNavigate }: ChatLabSidebarProps) {
           </span>
           <button
             type="button"
-            onClick={() => setNewProjectOpen(true)}
+            onClick={() => {
+              if (viewingAs) return;
+              setNewProjectOpen(true);
+            }}
+            disabled={viewingAs}
             aria-label="New project"
-            title="New project"
-            className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            title={viewingAs ? 'Read-only while viewing another user' : 'New project'}
+            className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Plus className="size-3.5" />
           </button>
@@ -199,12 +212,15 @@ function ProjectRow({
   const createSession = useCreateChatLabSession();
   const deleteProject = useDeleteChatLabProject();
   const { data: projectSessions } = useChatLabSessions(active ? { projectId: project.id } : {});
+  // Project rename/delete + new-chat are mutations — disabled while viewing as.
+  const { viewingAs } = useViewAs();
   const [renameOpen, setRenameOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
   const Chevron = active ? ChevronDown : ChevronRight;
 
   const handleNewChatInProject = async () => {
+    if (viewingAs) return;
     try {
       const session = await createSession.mutateAsync(project.id);
       router.push(`/p/${project.id}/c/${session.id}`);
@@ -257,11 +273,26 @@ function ProjectRow({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
             {/* Projects are collaboratively editable — rename for everyone. */}
-            <DropdownMenuItem onSelect={() => setRenameOpen(true)}>
+            <DropdownMenuItem
+              disabled={viewingAs}
+              title={viewingAs ? 'Read-only while viewing another user' : undefined}
+              onSelect={() => {
+                if (viewingAs) return;
+                setRenameOpen(true);
+              }}
+            >
               <Pencil className="size-4" /> Rename
             </DropdownMenuItem>
             {/* Whole-project delete stays with the creator. */}
-            <DropdownMenuItem variant="destructive" disabled={!project.isMine} onSelect={() => setDeleteOpen(true)}>
+            <DropdownMenuItem
+              variant="destructive"
+              disabled={!project.isMine || viewingAs}
+              title={viewingAs ? 'Read-only while viewing another user' : undefined}
+              onSelect={() => {
+                if (viewingAs) return;
+                setDeleteOpen(true);
+              }}
+            >
               <Trash2 className="size-4" /> Delete
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -281,8 +312,9 @@ function ProjectRow({
           <button
             type="button"
             onClick={() => void handleNewChatInProject()}
-            disabled={createSession.isPending}
-            className="ml-4 flex w-[calc(100%-1rem)] items-center gap-2 rounded-md border-l border-border py-1.5 pl-3.5 pr-2 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+            disabled={createSession.isPending || viewingAs}
+            title={viewingAs ? 'Read-only while viewing another user' : undefined}
+            className="ml-4 flex w-[calc(100%-1rem)] items-center gap-2 rounded-md border-l border-border py-1.5 pl-3.5 pr-2 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
           >
             {createSession.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
             New chat in project

@@ -13,3 +13,9 @@ next-env.d.ts
 
 # Misc
 .DS_Store
+
+# Electron desktop shell (self-contained package under desktop/). Build output
+# and its own dependencies are local-only; the generated build/icon.png IS
+# committed.
+/desktop/dist/
+/desktop/node_modules/

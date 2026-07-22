@@ -6,6 +6,21 @@ import { z } from 'zod';
 // garbage. Assistant message content is plain markdown text (model output).
 
 // ---------------------------------------------------------------------------
+// Identity / admin (GET /chatlab/me).
+// ---------------------------------------------------------------------------
+
+/** The caller's identity + admin status. Purely a rendering hint for the admin
+ *  chrome (view-as dropdown, stats scope toggle) — the server never trusts it
+ *  and re-enforces every authorization decision from the verified token.
+ *  `users` is the full allowlist for admins, [] for non-admins. */
+export const MeResponseSchema = z.object({
+  email: z.string(),
+  isAdmin: z.boolean(),
+  users: z.array(z.string()),
+});
+export type MeResponse = z.infer<typeof MeResponseSchema>;
+
+// ---------------------------------------------------------------------------
 // Model catalog (GET /chatlab/models).
 // ---------------------------------------------------------------------------
 

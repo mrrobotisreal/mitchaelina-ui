@@ -21,6 +21,7 @@ import {
   resolveChatLabAttachment,
   uploadChatLabAttachment,
 } from '@/lib/chatlab/api';
+import { useViewAs } from '@/lib/viewAs';
 import ModelPicker from './model-picker';
 import ReasoningPicker from './reasoning-picker';
 import GenerationOptions from './generation-options';
@@ -109,6 +110,11 @@ export default function Composer({
   useEffect(() => {
     attachmentsRef.current = attachments;
   }, [attachments]);
+
+  // Read-only while an admin is viewing another user's data: sending is a
+  // mutation the server rejects under view-as, so the whole composer is
+  // disabled (belt; the API is the suspenders).
+  const { viewingAs } = useViewAs();
 
   const selectedModel = models.find((m) => m.id === model) ?? null;
   const modalities = useMemo(() => modelModalities(selectedModel), [selectedModel]);
@@ -247,7 +253,7 @@ export default function Composer({
   const hasContent = isGeneration
     ? text.trim().length > 0
     : text.trim().length > 0 || readyAttachments.length > 0;
-  const canSend = !isStreaming && !uploading && !visionBlocked && !!model && hasContent;
+  const canSend = !isStreaming && !uploading && !visionBlocked && !!model && hasContent && !viewingAs;
 
   const handleSend = () => {
     if (!canSend || !model) return;
@@ -310,12 +316,15 @@ export default function Composer({
             }
           }}
           rows={1}
+          disabled={viewingAs}
           placeholder={
-            isGeneration
-              ? `Describe the ${outputModality} to generate… (Enter to send)`
-              : 'Message the model… (Enter to send, Shift+Enter for a new line)'
+            viewingAs
+              ? 'Read-only while viewing another user'
+              : isGeneration
+                ? `Describe the ${outputModality} to generate… (Enter to send)`
+                : 'Message the model… (Enter to send, Shift+Enter for a new line)'
           }
-          className="max-h-60 min-h-[2.5rem] w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+          className="max-h-60 min-h-[2.5rem] w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
         />
       </div>
 
@@ -324,10 +333,16 @@ export default function Composer({
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          disabled={attachments.length >= CHATLAB_MAX_ATTACHMENTS}
+          disabled={viewingAs || attachments.length >= CHATLAB_MAX_ATTACHMENTS}
           className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
           aria-label="Attach files"
-          title={isGeneration ? 'Attach an image to guide generation' : 'Attach images, PDFs, or text files'}
+          title={
+            viewingAs
+              ? 'Read-only while viewing another user'
+              : isGeneration
+                ? 'Attach an image to guide generation'
+                : 'Attach images, PDFs, or text files'
+          }
         >
           <Paperclip className="size-4" />
         </button>
@@ -406,6 +421,11 @@ export default function Composer({
         )}
       </div>
 
+      {viewingAs && (
+        <p className="px-3 pb-2 text-[11px] text-muted-foreground">
+          Read-only while viewing another user — you can inspect this chat but not send messages.
+        </p>
+      )}
       {visionBlocked && selectedModel && (
         <p className="px-3 pb-2 text-[11px] text-destructive">
           {selectedModel.name} can&apos;t see images — pick a vision-capable model or remove the image.

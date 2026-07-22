@@ -12,7 +12,9 @@ import {
   useChatLabStatsBreakdown,
   useChatLabStatsSummary,
   useChatLabStatsTimeseries,
+  useMe,
 } from '@/lib/chatlab/useChatLab';
+import { useViewAs } from '@/lib/viewAs';
 import { formatDurationMs } from '@/lib/formatDuration';
 import type { StatsRange } from '@/lib/chatlab/api';
 import type { ChatLabRequestType, ChatLabStatsBreakdownRow, ChatLabStatsBucket } from '@/schemas/chatLab';
@@ -90,17 +92,28 @@ export default function StatsView() {
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const perfType = typeFilter === 'all' ? undefined : typeFilter;
 
-  const summaryQuery = useChatLabStatsSummary(range);
-  const spendSeries = useChatLabStatsTimeseries(active.bucket, 'model', range);
-  const tokenSeries = useChatLabStatsTimeseries(active.bucket, 'none', range);
-  const modelRows = useChatLabStatsBreakdown('model', range);
-  const projectRows = useChatLabStatsBreakdown('project', range);
-  const userRows = useChatLabStatsBreakdown('user', range);
-  const sessionRows = useChatLabStatsBreakdown('session', range);
-  const kindRows = useChatLabStatsBreakdown('kind', range);
-  const perfSeries = useChatLabStatsTimeseries(active.bucket, 'none', range, perfType);
-  const perfModelRows = useChatLabStatsBreakdown('model', range, perfType);
-  const typeMixRows = useChatLabStatsBreakdown('type', range);
+  // Admin scope toggle. Non-admins have no toggle (their stats are always their
+  // own). While an admin is viewing another user (view-as), the scope is that
+  // user's data and the toggle is hidden — scope=all can't combine with
+  // view-as. `allUsers` maps to the admin-only ?scope=all aggregate view.
+  const { data: me } = useMe();
+  const { viewingAs } = useViewAs();
+  const isAdmin = me?.isAdmin ?? false;
+  const [statsScope, setStatsScope] = useState<'mine' | 'all'>('mine');
+  const showScopeToggle = isAdmin && !viewingAs;
+  const allUsers = showScopeToggle && statsScope === 'all';
+
+  const summaryQuery = useChatLabStatsSummary(range, allUsers);
+  const spendSeries = useChatLabStatsTimeseries(active.bucket, 'model', range, undefined, allUsers);
+  const tokenSeries = useChatLabStatsTimeseries(active.bucket, 'none', range, undefined, allUsers);
+  const modelRows = useChatLabStatsBreakdown('model', range, undefined, allUsers);
+  const projectRows = useChatLabStatsBreakdown('project', range, undefined, allUsers);
+  const userRows = useChatLabStatsBreakdown('user', range, undefined, allUsers);
+  const sessionRows = useChatLabStatsBreakdown('session', range, undefined, allUsers);
+  const kindRows = useChatLabStatsBreakdown('kind', range, undefined, allUsers);
+  const perfSeries = useChatLabStatsTimeseries(active.bucket, 'none', range, perfType, allUsers);
+  const perfModelRows = useChatLabStatsBreakdown('model', range, perfType, allUsers);
+  const typeMixRows = useChatLabStatsBreakdown('type', range, undefined, allUsers);
 
   useQueryErrorRedirect(summaryQuery.error);
 
@@ -182,7 +195,29 @@ export default function StatsView() {
       <div className="mx-auto w-full max-w-5xl space-y-4 p-4 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h1 className="text-xl font-semibold tracking-tight">Usage &amp; Stats</h1>
-          <span className="text-[11px] text-muted-foreground">Times in UTC</span>
+          <div className="flex items-center gap-3">
+            {showScopeToggle && (
+              <div className="flex items-center gap-1" role="group" aria-label="Stats scope">
+                {(['mine', 'all'] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setStatsScope(s)}
+                    aria-pressed={statsScope === s}
+                    className={cn(
+                      'rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
+                      statsScope === s
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                    )}
+                  >
+                    {s === 'mine' ? 'My usage' : 'All users'}
+                  </button>
+                ))}
+              </div>
+            )}
+            <span className="text-[11px] text-muted-foreground">Times in UTC</span>
+          </div>
         </div>
 
         <BalanceCard summary={summaryQuery.data} />
@@ -264,7 +299,8 @@ export default function StatsView() {
             <TabsList className="m-3">
               <TabsTrigger value="models">Models</TabsTrigger>
               <TabsTrigger value="projects">Projects</TabsTrigger>
-              <TabsTrigger value="users">Users</TabsTrigger>
+              {/* The Users breakdown only makes sense in the all-users view. */}
+              {allUsers && <TabsTrigger value="users">Users</TabsTrigger>}
               <TabsTrigger value="chats">Chats</TabsTrigger>
               <TabsTrigger value="kinds">Call kind</TabsTrigger>
             </TabsList>
@@ -279,14 +315,16 @@ export default function StatsView() {
                 emptyText="No usage in range."
               />
             </TabsContent>
-            <TabsContent value="users">
-              <StatsTable
-                rows={userRows.data ?? []}
-                columns={[labelColumn('User'), ...baseColumns()]}
-                keyFor={(r) => r.key}
-                emptyText="No usage in range."
-              />
-            </TabsContent>
+            {allUsers && (
+              <TabsContent value="users">
+                <StatsTable
+                  rows={userRows.data ?? []}
+                  columns={[labelColumn('User'), ...baseColumns()]}
+                  keyFor={(r) => r.key}
+                  emptyText="No usage in range."
+                />
+              </TabsContent>
+            )}
             <TabsContent value="chats">
               <StatsTable rows={sessionRows.data ?? []} columns={sessionColumns} keyFor={(r) => r.key} emptyText="No usage in range." />
             </TabsContent>

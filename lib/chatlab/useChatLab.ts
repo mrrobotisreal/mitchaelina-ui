@@ -21,6 +21,7 @@ import type {
 // project-free sidebar list; a project id scopes to that project's chats.
 export const chatLabKeys = {
   all: ['chatlab'] as const,
+  me: () => ['chatlab', 'me'] as const,
   models: () => ['chatlab', 'models'] as const,
   sessionsRoot: ['chatlab', 'sessions'] as const, // prefix matching ALL session lists
   sessions: (projectId?: string) => ['chatlab', 'sessions', projectId ?? 'general'] as const,
@@ -32,17 +33,32 @@ export const projectKeys = {
   project: (projectId: string) => ['chatlab', 'project', projectId] as const,
 };
 
+// The `scope` dimension ('mine' | 'all') keeps the admin scope toggle's two
+// views in separate cache slots so switching refetches with the right ?scope.
 export const statsKeys = {
   all: ['chatlab', 'stats'] as const,
-  summary: (from?: string, to?: string) => ['chatlab', 'stats', 'summary', from ?? '', to ?? ''] as const,
-  breakdown: (dimension: string, from?: string, to?: string, type?: string) =>
-    ['chatlab', 'stats', 'breakdown', dimension, from ?? '', to ?? '', type ?? ''] as const,
-  timeseries: (bucket: string, dimension: string, from?: string, to?: string, type?: string) =>
-    ['chatlab', 'stats', 'timeseries', bucket, dimension, from ?? '', to ?? '', type ?? ''] as const,
+  summary: (from?: string, to?: string, scope = 'mine') =>
+    ['chatlab', 'stats', 'summary', from ?? '', to ?? '', scope] as const,
+  breakdown: (dimension: string, from?: string, to?: string, type?: string, scope = 'mine') =>
+    ['chatlab', 'stats', 'breakdown', dimension, from ?? '', to ?? '', type ?? '', scope] as const,
+  timeseries: (bucket: string, dimension: string, from?: string, to?: string, type?: string, scope = 'mine') =>
+    ['chatlab', 'stats', 'timeseries', bucket, dimension, from ?? '', to ?? '', type ?? '', scope] as const,
   credits: () => ['chatlab', 'stats', 'credits'] as const,
 };
 
 // ---- Queries ---------------------------------------------------------------
+
+/** The caller's identity + admin status — drives the admin chrome (view-as
+ *  dropdown, stats scope toggle). Rendering hint only; the server re-enforces
+ *  every decision. Rarely changes, so a long staleTime. */
+export function useMe() {
+  return useQuery({
+    queryKey: chatLabKeys.me(),
+    queryFn: api.fetchMe,
+    staleTime: 5 * 60_000,
+    retry: queryRetry,
+  });
+}
 
 /** The filtered model catalog (server caches for 1h — mirror that here). The
  *  same fetch carries the lab config (feedback categories) — one shared query,
@@ -293,10 +309,12 @@ export function useMessageFeedback(sessionId: string) {
 
 // ---- Usage & spend analytics + credits -------------------------------------------
 
-export function useChatLabStatsSummary(range: api.StatsRange) {
+// `allUsers` maps to the admin-only ?scope=all aggregate view; default is the
+// effective viewer's own usage.
+export function useChatLabStatsSummary(range: api.StatsRange, allUsers = false) {
   return useQuery({
-    queryKey: statsKeys.summary(range.from, range.to),
-    queryFn: () => api.fetchChatLabStatsSummary(range),
+    queryKey: statsKeys.summary(range.from, range.to, allUsers ? 'all' : 'mine'),
+    queryFn: () => api.fetchChatLabStatsSummary(range, allUsers),
     staleTime: 15_000,
     retry: queryRetry,
   });
@@ -308,10 +326,11 @@ export function useChatLabStatsBreakdown(
   dimension: ChatLabStatsDimension,
   range: api.StatsRange,
   type?: ChatLabRequestType,
+  allUsers = false,
 ) {
   return useQuery({
-    queryKey: statsKeys.breakdown(dimension, range.from, range.to, type),
-    queryFn: () => api.fetchChatLabStatsBreakdown(dimension, range, type),
+    queryKey: statsKeys.breakdown(dimension, range.from, range.to, type, allUsers ? 'all' : 'mine'),
+    queryFn: () => api.fetchChatLabStatsBreakdown(dimension, range, type, 50, allUsers),
     staleTime: 15_000,
     retry: queryRetry,
   });
@@ -322,10 +341,11 @@ export function useChatLabStatsTimeseries(
   dimension: 'none' | 'model' | 'kind',
   range: api.StatsRange,
   type?: ChatLabRequestType,
+  allUsers = false,
 ) {
   return useQuery({
-    queryKey: statsKeys.timeseries(bucket, dimension, range.from, range.to, type),
-    queryFn: () => api.fetchChatLabStatsTimeseries(bucket, dimension, range, type),
+    queryKey: statsKeys.timeseries(bucket, dimension, range.from, range.to, type, allUsers ? 'all' : 'mine'),
+    queryFn: () => api.fetchChatLabStatsTimeseries(bucket, dimension, range, type, allUsers),
     staleTime: 15_000,
     retry: queryRetry,
   });

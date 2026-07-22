@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useChatLabFeedbackCategories, useMessageFeedback } from '@/lib/chatlab/useChatLab';
+import { useViewAs } from '@/lib/viewAs';
 import { relativeTime } from '@/lib/relativeTime';
 import { displayNameFromEmail } from './display';
 import type { ChatLabFeedbackRating, ChatLabMessageFeedback } from '@/schemas/chatLab';
@@ -37,6 +38,9 @@ function feedbackSummary(f: ChatLabMessageFeedback): string {
 export default function MessageFeedback({ sessionId, messageId, feedback }: MessageFeedbackProps) {
   const { data: categories } = useChatLabFeedbackCategories();
   const { put, remove } = useMessageFeedback(sessionId);
+  // Saving/removing feedback is a mutation (and refreshes project memory) —
+  // disabled while an admin is viewing another user's data.
+  const { viewingAs } = useViewAs();
 
   const mine = feedback?.find((f) => f.isMine) ?? null;
   const others = (feedback ?? []).filter((f) => !f.isMine);
@@ -47,6 +51,8 @@ export default function MessageFeedback({ sessionId, messageId, feedback }: Mess
   const [comment, setComment] = useState('');
 
   const openFor = (rating: ChatLabFeedbackRating) => {
+    // Read-only while viewing another user: never open the editing popover.
+    if (viewingAs) return;
     // Seed from the existing rating when editing the same thumb.
     if (mine && mine.rating === rating) {
       setSelected(mine.categories);
@@ -97,10 +103,11 @@ export default function MessageFeedback({ sessionId, messageId, feedback }: Mess
         <PopoverTrigger asChild>
           <button
             type="button"
+            disabled={viewingAs}
             aria-label={rating === 'up' ? 'Rate response up' : 'Rate response down'}
-            title={summaryTitle || undefined}
+            title={viewingAs ? 'Read-only while viewing another user' : summaryTitle || undefined}
             className={cn(
-              'flex items-center gap-0.5 rounded px-1.5 py-0.5 transition-colors hover:bg-accent hover:text-foreground',
+              'flex items-center gap-0.5 rounded px-1.5 py-0.5 transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60',
               filledByMe
                 ? rating === 'up'
                   ? 'text-primary'

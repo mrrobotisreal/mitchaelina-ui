@@ -23,7 +23,8 @@ import {
 } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { relativeTime } from '@/lib/relativeTime';
-import { useChatLabCredits, useChatLabCreditMutations } from '@/lib/chatlab/useChatLab';
+import { useChatLabCredits, useChatLabCreditMutations, useMe } from '@/lib/chatlab/useChatLab';
+import { useViewAs } from '@/lib/viewAs';
 import { displayNameFromEmail } from '../display';
 import { formatUsd } from './stats-table';
 import type { ChatLabCreditEntry, ChatLabStatsSummary } from '@/schemas/chatLab';
@@ -49,6 +50,15 @@ export default function BalanceCard({ summary }: { summary: ChatLabStatsSummary 
   const [manageOpen, setManageOpen] = useState(false);
   const { balance, totals } = summary;
   const approx = totals.unknownCostEvents > 0 || totals.estimatedCostEvents > 0;
+
+  // The ledger reflects the one real OpenRouter account: only the admin
+  // bookkeeps it (server enforces admin-only credit mutations). Everyone still
+  // SEES the balance. View-as is read-only, so hide the controls there too
+  // (apiSend never carries the view-as header, so the server would otherwise
+  // accept the admin's edit — the UI is the guard here).
+  const { data: me } = useMe();
+  const { viewingAs } = useViewAs();
+  const canManage = (me?.isAdmin ?? false) && !viewingAs;
 
   return (
     <Card className="gap-3 p-5">
@@ -98,12 +108,14 @@ export default function BalanceCard({ summary }: { summary: ChatLabStatsSummary 
             </p>
           )}
         </div>
-        <Button variant="outline" size="sm" onClick={() => setManageOpen(true)}>
-          {balance.hasLedger ? 'Manage credits' : 'Set a starting balance'}
-        </Button>
+        {canManage && (
+          <Button variant="outline" size="sm" onClick={() => setManageOpen(true)}>
+            {balance.hasLedger ? 'Manage credits' : 'Set a starting balance'}
+          </Button>
+        )}
       </div>
 
-      <CreditsDialog open={manageOpen} onOpenChange={setManageOpen} />
+      {canManage && <CreditsDialog open={manageOpen} onOpenChange={setManageOpen} />}
     </Card>
   );
 }

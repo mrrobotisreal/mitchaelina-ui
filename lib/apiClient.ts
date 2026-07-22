@@ -5,6 +5,7 @@
 
 import { getBaseURL } from '@/lib/utils';
 import { getCurrentIdToken } from '@/lib/firebase';
+import { getViewAsEmail } from '@/lib/viewAs';
 
 /** ApiError carries the HTTP status so the retry policy and the 401→sign-in
  *  redirect can branch on it. */
@@ -37,18 +38,28 @@ async function authToken(): Promise<string> {
   return token;
 }
 
-/** GET an API endpoint, returning parsed JSON. */
+/** GET an API endpoint, returning parsed JSON. When an admin has activated
+ *  view-as, the X-View-As header rides along so the API returns the viewed
+ *  user's data. Deliberately GET-only: mutations must NEVER carry the header
+ *  (the server rejects it with 403, and mutating UI is disabled), so apiSend
+ *  omits it. */
 export async function apiGet(path: string): Promise<unknown> {
   const token = await authToken();
+  const viewAs = getViewAsEmail();
   const res = await fetch(`${getBaseURL()}${path}`, {
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+      ...(viewAs ? { 'X-View-As': viewAs } : {}),
+    },
   });
   if (!res.ok) throw new ApiError(res.status, await safeErrorMessage(res));
   return res.json();
 }
 
 /** Send a mutating request (POST/DELETE) with an optional JSON body. Tolerates
- *  an empty response body (returns {}). */
+ *  an empty response body (returns {}). NB: never attaches X-View-As —
+ *  view-as is read-only. */
 export async function apiSend(method: 'POST' | 'DELETE' | 'PUT', path: string, body?: unknown): Promise<unknown> {
   const token = await authToken();
   const res = await fetch(`${getBaseURL()}${path}`, {

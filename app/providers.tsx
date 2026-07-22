@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from 'next-themes';
 import { Toaster } from '@/components/ui/sonner';
 import AnalyticsListener from '@/components/analytics-listener';
+import { ViewAsProvider } from '@/lib/viewAs';
 
 // One QueryClient for the app lifetime. Created lazily inside the component so
 // each browser tab gets its own instance and it is never shared across requests
@@ -20,11 +21,13 @@ export default function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
-        {children}
-        <Toaster />
-        <AnalyticsListener />
-      </ThemeProvider>
+      <ViewAsProvider>
+        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
+          {children}
+          <Toaster />
+          <AnalyticsListener />
+        </ThemeProvider>
+      </ViewAsProvider>
     </QueryClientProvider>
   );
 }

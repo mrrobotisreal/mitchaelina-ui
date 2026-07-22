@@ -49,6 +49,7 @@ import {
   readImageDimensions,
   uploadChatLabProjectAsset,
 } from '@/lib/chatlab/api';
+import { useViewAs } from '@/lib/viewAs';
 import {
   CHATLAB_MAX_PROJECT_ASSETS,
   chatLabProjectAssetAccept,
@@ -85,6 +86,9 @@ export default function ProjectView({ projectId }: { projectId: string }) {
   const projectQuery = useChatLabProject(projectId);
   const createSession = useCreateChatLabSession();
   const refreshMemory = useRefreshChatLabMemory();
+  // Every write on this page (new chat, edit, asset upload/delete, memory
+  // refresh) is disabled while an admin is viewing another user's data.
+  const { viewingAs } = useViewAs();
   useQueryErrorRedirect(projectQuery.error);
 
   const [editOpen, setEditOpen] = useState(false);
@@ -119,6 +123,7 @@ export default function ProjectView({ projectId }: { projectId: string }) {
   }
 
   const handleNewChat = async () => {
+    if (viewingAs) return;
     try {
       const session = await createSession.mutateAsync(projectId);
       router.push(`/p/${projectId}/c/${session.id}`);
@@ -128,6 +133,7 @@ export default function ProjectView({ projectId }: { projectId: string }) {
   };
 
   const startAssetUpload = async (file: File) => {
+    if (viewingAs) return;
     const check = checkProjectAssetFile(file);
     if (!check) {
       toast.error(`Unsupported asset type: ${file.name}`);
@@ -165,6 +171,7 @@ export default function ProjectView({ projectId }: { projectId: string }) {
   };
 
   const handleDeleteAsset = async () => {
+    if (viewingAs) return;
     if (!deletingAsset) return;
     try {
       await deleteChatLabProjectAsset(projectId, deletingAsset.id);
@@ -176,10 +183,11 @@ export default function ProjectView({ projectId }: { projectId: string }) {
   };
 
   const handleRefreshMemory = async () => {
+    if (viewingAs) return;
     try {
       const res = await refreshMemory.mutateAsync(projectId);
       if (res.status === 'disabled') {
-        toast('Project memory is disabled — set DR_CHATLAB_MEMORY_MODEL on the server to enable it.');
+        toast('Project memory is disabled — set CHATLAB_MEMORY_MODEL on the server to enable it.');
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to refresh memory');
@@ -196,10 +204,14 @@ export default function ProjectView({ projectId }: { projectId: string }) {
               <h1 className="truncate text-xl font-semibold tracking-tight">{project.name}</h1>
               <button
                 type="button"
-                onClick={() => setEditOpen(true)}
+                onClick={() => {
+                  if (viewingAs) return;
+                  setEditOpen(true);
+                }}
+                disabled={viewingAs}
                 aria-label="Edit project"
-                title="Edit name, description, and instructions"
-                className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                title={viewingAs ? 'Read-only while viewing another user' : 'Edit name, description, and instructions'}
+                className="rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Pencil className="size-4" />
               </button>
@@ -210,7 +222,12 @@ export default function ProjectView({ projectId }: { projectId: string }) {
               {project.assetCount === 1 ? 'asset' : 'assets'}
             </p>
           </div>
-          <Button onClick={() => void handleNewChat()} disabled={createSession.isPending} className="gap-2">
+          <Button
+            onClick={() => void handleNewChat()}
+            disabled={createSession.isPending || viewingAs}
+            title={viewingAs ? 'Read-only while viewing another user' : undefined}
+            className="gap-2"
+          >
             {createSession.isPending ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
             New chat
           </Button>
@@ -246,7 +263,14 @@ export default function ProjectView({ projectId }: { projectId: string }) {
             <Card className="gap-3 p-5">
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold">Instructions &amp; Description</h3>
-                <Button variant="outline" size="sm" onClick={() => setEditOpen(true)} className="gap-1.5">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setEditOpen(true)}
+                  disabled={viewingAs}
+                  title={viewingAs ? 'Read-only while viewing another user' : undefined}
+                  className="gap-1.5"
+                >
                   <Pencil className="size-3.5" /> Edit
                 </Button>
               </div>
@@ -281,7 +305,8 @@ export default function ProjectView({ projectId }: { projectId: string }) {
                   variant="outline"
                   size="sm"
                   className="gap-1.5"
-                  disabled={project.assets.length + uploads.length >= CHATLAB_MAX_PROJECT_ASSETS}
+                  disabled={project.assets.length + uploads.length >= CHATLAB_MAX_PROJECT_ASSETS || viewingAs}
+                  title={viewingAs ? 'Read-only while viewing another user' : undefined}
                   onClick={() => fileInputRef.current?.click()}
                 >
                   <Paperclip className="size-3.5" /> Upload
@@ -350,9 +375,14 @@ export default function ProjectView({ projectId }: { projectId: string }) {
                         </a>
                         <button
                           type="button"
-                          onClick={() => setDeletingAsset(a)}
+                          onClick={() => {
+                            if (viewingAs) return;
+                            setDeletingAsset(a);
+                          }}
+                          disabled={viewingAs}
                           aria-label={`Delete ${a.fileName}`}
-                          className="rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-destructive focus:opacity-100 group-hover:opacity-100"
+                          title={viewingAs ? 'Read-only while viewing another user' : undefined}
+                          className="rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-destructive focus:opacity-100 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-50 disabled:group-hover:opacity-50"
                         >
                           <Trash2 className="size-4" />
                         </button>
@@ -410,7 +440,8 @@ export default function ProjectView({ projectId }: { projectId: string }) {
                     size="sm"
                     className="gap-1.5"
                     onClick={() => void handleRefreshMemory()}
-                    disabled={refreshMemory.isPending || project.memoryStatus === 'updating' || project.memoryStatus === 'disabled'}
+                    disabled={refreshMemory.isPending || project.memoryStatus === 'updating' || project.memoryStatus === 'disabled' || viewingAs}
+                    title={viewingAs ? 'Read-only while viewing another user' : undefined}
                   >
                     <RefreshCw className={cn('size-3.5', refreshMemory.isPending && 'animate-spin')} />
                     Refresh memory
@@ -420,7 +451,7 @@ export default function ProjectView({ projectId }: { projectId: string }) {
 
               {project.memoryStatus === 'disabled' ? (
                 <p className="text-sm italic text-muted-foreground">
-                  Project memory is disabled — set <code className="rounded bg-muted px-1">DR_CHATLAB_MEMORY_MODEL</code>{' '}
+                  Project memory is disabled — set <code className="rounded bg-muted px-1">CHATLAB_MEMORY_MODEL</code>{' '}
                   on the server to enable automatic memory.
                 </p>
               ) : project.memory ? (

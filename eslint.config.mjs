@@ -11,6 +11,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // The Electron shell is a self-contained package with its own toolchain.
+    "desktop/**",
   ]),
   {
     // Rule tuning carried over from the source app. Deliberate, narrow

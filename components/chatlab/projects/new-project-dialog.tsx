@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useCreateChatLabProject } from '@/lib/chatlab/useChatLab';
+import { useViewAs } from '@/lib/viewAs';
 
 // New Project dialog: name (required) + description + instructions. Create
 // navigates to the project page. Controlled from the sidebar's Plus button.
@@ -29,6 +30,9 @@ export default function NewProjectDialog({
 }) {
   const router = useRouter();
   const createProject = useCreateChatLabProject();
+  // Creating a project is a mutation — blocked while viewing another user
+  // (the sidebar trigger is also disabled; this is defense-in-depth).
+  const { viewingAs } = useViewAs();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [instructions, setInstructions] = useState('');
@@ -40,6 +44,7 @@ export default function NewProjectDialog({
   };
 
   const handleCreate = async () => {
+    if (viewingAs) return;
     const trimmed = name.trim();
     if (!trimmed || trimmed.length > 120) {
       toast.error('Project name must be 1–120 characters');
@@ -116,7 +121,11 @@ export default function NewProjectDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={() => void handleCreate()} disabled={createProject.isPending || !name.trim()}>
+          <Button
+            onClick={() => void handleCreate()}
+            disabled={createProject.isPending || !name.trim() || viewingAs}
+            title={viewingAs ? 'Read-only while viewing another user' : undefined}
+          >
             {createProject.isPending && <Loader2 className="size-4 animate-spin" />}
             Create project
           </Button>

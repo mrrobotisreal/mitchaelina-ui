@@ -32,6 +32,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useDeleteChatLabSession, useRenameChatLabSession } from '@/lib/chatlab/useChatLab';
+import { useViewAs } from '@/lib/viewAs';
 import type { ChatLabSession } from '@/schemas/chatLab';
 
 // Session rows + their rename/delete affordances, shared by the sidebar
@@ -55,6 +56,8 @@ export default function SessionRows({ sessions, hrefFor, activeId, onNavigate, d
   const pathname = usePathname();
   const renameSession = useRenameChatLabSession();
   const deleteSession = useDeleteChatLabSession();
+  // Rename/delete are mutations — disabled while an admin views another user.
+  const { viewingAs } = useViewAs();
 
   const [renaming, setRenaming] = useState<ChatLabSession | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -121,15 +124,25 @@ export default function SessionRows({ sessions, hrefFor, activeId, onNavigate, d
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
               <DropdownMenuItem
-                disabled={!s.isMine}
+                disabled={!s.isMine || viewingAs}
+                title={viewingAs ? 'Read-only while viewing another user' : undefined}
                 onSelect={() => {
+                  if (viewingAs) return;
                   setRenaming(s);
                   setRenameValue(s.title);
                 }}
               >
                 <Pencil className="size-4" /> Rename
               </DropdownMenuItem>
-              <DropdownMenuItem variant="destructive" disabled={!s.isMine} onSelect={() => setDeleting(s)}>
+              <DropdownMenuItem
+                variant="destructive"
+                disabled={!s.isMine || viewingAs}
+                title={viewingAs ? 'Read-only while viewing another user' : undefined}
+                onSelect={() => {
+                  if (viewingAs) return;
+                  setDeleting(s);
+                }}
+              >
                 <Trash2 className="size-4" /> Delete
               </DropdownMenuItem>
             </DropdownMenuContent>

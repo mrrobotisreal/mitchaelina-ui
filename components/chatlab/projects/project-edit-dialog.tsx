@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useUpdateChatLabProject } from '@/lib/chatlab/useChatLab';
+import { useViewAs } from '@/lib/viewAs';
 
 // Edit dialog for a project's name/description/instructions. Projects are
 // COLLABORATIVELY editable — both portal users get this, the server enforces
@@ -38,6 +39,9 @@ export default function ProjectEditDialog({
   initialInstructions?: string;
 }) {
   const updateProject = useUpdateChatLabProject();
+  // Editing a project is a mutation (and refreshes memory) — blocked while
+  // viewing another user (the trigger is also disabled; defense-in-depth).
+  const { viewingAs } = useViewAs();
   const [name, setName] = useState(initialName);
   const [description, setDescription] = useState(initialDescription);
   const [instructions, setInstructions] = useState(initialInstructions);
@@ -55,6 +59,7 @@ export default function ProjectEditDialog({
   }
 
   const handleSave = async () => {
+    if (viewingAs) return;
     const trimmed = name.trim();
     if (!trimmed || trimmed.length > 120) {
       toast.error('Project name must be 1–120 characters');
@@ -136,7 +141,11 @@ export default function ProjectEditDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={() => void handleSave()} disabled={updateProject.isPending}>
+          <Button
+            onClick={() => void handleSave()}
+            disabled={updateProject.isPending || viewingAs}
+            title={viewingAs ? 'Read-only while viewing another user' : undefined}
+          >
             {updateProject.isPending && <Loader2 className="size-4 animate-spin" />}
             Save
           </Button>

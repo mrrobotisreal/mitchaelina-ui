@@ -6,6 +6,7 @@
 
 import {
   CHATLAB_ATTACHMENT_EXT,
+  MeResponseSchema,
   ChatLabCreditEntrySchema,
   ChatLabCreditsResponseSchema,
   ChatLabDeletedResponseSchema,
@@ -45,11 +46,18 @@ import {
   type ChatLabStatsDimension,
   type ChatLabStatsSummary,
   type ChatLabStatsTimeseriesPoint,
+  type MeResponse,
 } from '@/schemas/chatLab';
 import { apiGet, apiSend } from '@/lib/apiClient';
 import { putToS3 } from '@/lib/s3Upload';
 
 const enc = encodeURIComponent;
+
+// ---- Identity / admin ------------------------------------------------------------
+
+/** The caller's identity + admin status (drives admin chrome; server never
+ *  trusts the response). */
+export const fetchMe = async (): Promise<MeResponse> => MeResponseSchema.parse(await apiGet('/chatlab/me'));
 
 // ---- Models / lab config ---------------------------------------------------------
 
@@ -300,14 +308,19 @@ function rangeParams(range: StatsRange, extra?: Record<string, string>): string 
   return s ? `?${s}` : '';
 }
 
-export const fetchChatLabStatsSummary = async (range: StatsRange): Promise<ChatLabStatsSummary> =>
-  ChatLabStatsSummarySchema.parse(await apiGet(`/chatlab/stats/summary${rangeParams(range)}`));
+// `allUsers` maps to the admin-only ?scope=all (aggregate across every user);
+// omitted/false uses the server default (the effective viewer's own usage).
+export const fetchChatLabStatsSummary = async (range: StatsRange, allUsers = false): Promise<ChatLabStatsSummary> =>
+  ChatLabStatsSummarySchema.parse(
+    await apiGet(`/chatlab/stats/summary${rangeParams(range, allUsers ? { scope: 'all' } : undefined)}`),
+  );
 
 export const fetchChatLabStatsBreakdown = async (
   dimension: ChatLabStatsDimension,
   range: StatsRange,
   requestType?: ChatLabRequestType,
   limit = 50,
+  allUsers = false,
 ): Promise<ChatLabStatsBreakdownRow[]> =>
   ChatLabStatsBreakdownResponseSchema.parse(
     await apiGet(
@@ -315,6 +328,7 @@ export const fetchChatLabStatsBreakdown = async (
         dimension,
         limit: String(limit),
         ...(requestType ? { type: requestType } : {}),
+        ...(allUsers ? { scope: 'all' } : {}),
       })}`,
     ),
   ).rows;
@@ -324,6 +338,7 @@ export const fetchChatLabStatsTimeseries = async (
   dimension: 'none' | 'model' | 'kind',
   range: StatsRange,
   requestType?: ChatLabRequestType,
+  allUsers = false,
 ): Promise<ChatLabStatsTimeseriesPoint[]> =>
   ChatLabStatsTimeseriesResponseSchema.parse(
     await apiGet(
@@ -331,6 +346,7 @@ export const fetchChatLabStatsTimeseries = async (
         bucket,
         dimension,
         ...(requestType ? { type: requestType } : {}),
+        ...(allUsers ? { scope: 'all' } : {}),
       })}`,
     ),
   ).points;

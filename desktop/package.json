@@ -1,0 +1,39 @@
+{
+  "name": "mitchaelina-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mitchaelina desktop shell (Electron) — wraps the deployed web app at www.mitchaelina.com.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "icons": "node scripts/make-icons.mjs",
+    "dist:mac": "electron-builder --mac --arm64 --x64",
+    "dist:win": "electron-builder --win --x64"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "sharp": "^0.33.5"
+  },
+  "build": {
+    "appId": "io.creatv.mitchaelina",
+    "productName": "Mitchaelina",
+    "directories": {
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "build/icon.png"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        { "target": "dmg", "arch": ["arm64", "x64"] },
+        { "target": "zip", "arch": ["arm64", "x64"] }
+      ]
+    },
+    "win": {
+      "target": "nsis"
+    }
+  }
+}
