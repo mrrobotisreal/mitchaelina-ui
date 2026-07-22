@@ -4,10 +4,18 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Brand font for the "Mitchaelina" wordmark. `font-display: swap` lets the
- * text render in a system fallback while the font streams, so first paint is
- * never blocked by font I/O. Only used via the `font-brand` utility — body
- * text stays on the system stack.
+ * Fonts, all self-hosted from /public/fonts and streamed with
+ * `font-display: swap` so first paint is never blocked by font I/O (a system
+ * fallback shows until each face loads). Because the desktop app loads the
+ * deployed web app as a remote URL, these faces ship to Electron automatically
+ * — nothing font-related lives in desktop/.
+ *
+ * Three roles:
+ *   - Emilys Candy — the "Mitchaelina" wordmark ONLY (the `font-brand` utility).
+ *   - Mystery Quest — the default body font (`--font-sans`): every other piece
+ *     of text in the app.
+ *   - JetBrains Mono — code only (`--font-mono`: <code>/<pre>/<kbd>/<samp> and
+ *     the `font-mono` utility).
  */
 @font-face {
   font-family: "Emilys Candy";
@@ -17,8 +25,34 @@
   src: url("/fonts/EmilysCandy-Regular.ttf") format("truetype");
 }
 
+@font-face {
+  font-family: "Mystery Quest";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/Mystery_Quest/MysteryQuest-Regular.ttf") format("truetype");
+}
+
+/* JetBrains Mono ships as a variable font (weight axis), so one face covers the
+ * whole weight range; a second declares the matching italic axis. */
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("/fonts/JetBrains_Mono/JetBrainsMono-VariableFont_wght.ttf") format("truetype");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: italic;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("/fonts/JetBrains_Mono/JetBrainsMono-Italic-VariableFont_wght.ttf") format("truetype");
+}
+
 @theme inline {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-sans: "Mystery Quest", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --font-brand: "Emilys Candy", ui-sans-serif, system-ui, sans-serif;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -133,5 +167,14 @@
   body {
     @apply bg-background text-foreground font-sans;
     min-height: 100vh;
+  }
+  /* Code always renders in JetBrains Mono — inline <code>, fenced <pre>
+   * blocks, and <kbd>/<samp> — regardless of whether the element carries the
+   * `font-mono` utility (e.g. the markdown renderer's <pre> relies on this). */
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--font-mono);
   }
 }
