@@ -11,28 +11,73 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { ChatLabGenerationOptions, ChatLabOutputModality } from '@/schemas/chatLab';
+import type { ChatLabGenerationOptions, ChatLabModel, ChatLabOutputModality } from '@/schemas/chatLab';
 
-// The media-generation options popover: aspect ratio + resolution (both
-// modalities) and duration (video only). Everything defaults to "Auto" (the
-// provider default) and is omitted from the request when left as Auto — the
-// server loosely validates and lets the provider 400 on model-specific
-// mismatches. Shown only when the composer's output modality is image/video.
+// The media-generation options popover. When the selected model advertises
+// normalized capabilities (generationCaps), every control is RESTRICTED to what
+// that model actually supports — aspect ratios + resolutions become the model's
+// sets, duration becomes a Select of the exact allowed values, and audio-capable
+// video models gain an Audio toggle. When caps are absent (a text model that
+// somehow got here, a discovery gap, or an older API), the controls fall back to
+// the generic lists and a free-typed duration — exactly the pre-caps behavior.
+//
+// Everything defaults to "Auto" (the provider default) and is omitted from the
+// request when left as Auto. The server validates strictly against the same caps
+// as a backstop; the UI aims to make that backstop unreachable.
 
 // Radix Select forbids an empty item value, so "Auto" travels as this sentinel
-// and maps back to '' at the boundary.
+// and maps back to '' / undefined at the boundary.
 const AUTO = 'auto';
 
-// Aspect ratios grouped by orientation so portrait/landscape are easy to find
-// (e.g. Sora's portrait vs landscape). Widest→squarest within each section.
-const ASPECT_GROUPS: { label: string; ratios: string[] }[] = [
-  { label: 'Landscape', ratios: ['16:9', '3:2', '4:3'] },
-  { label: 'Square', ratios: ['1:1'] },
-  { label: 'Portrait', ratios: ['9:16', '2:3', '3:4'] },
-];
-
+// Generic fallbacks used ONLY when the model advertises no caps for that knob.
+// The aspect fallback is the historical grouped set, flattened; it is fed
+// through the same grouping logic as live caps so the visual language matches.
+const FALLBACK_ASPECTS = ['16:9', '3:2', '4:3', '1:1', '9:16', '2:3', '3:4'];
 const IMAGE_RESOLUTIONS = ['512', '1K', '2K', '4K'];
 const VIDEO_RESOLUTIONS = ['480p', '720p', '1080p'];
+
+// parseRatio turns "16:9" into [16, 9]; returns null for anything malformed
+// (non-numeric, zero/negative), so novel-but-valid ratios pass and junk is
+// skipped rather than crashing.
+function parseRatio(ratio: string): [number, number] | null {
+  const [w, h] = ratio.split(':').map(Number);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
+  return [w, h];
+}
+
+// groupAspectRatios buckets a flat ratio list into Landscape / Square / Portrait
+// by orientation (w/h: >1 landscape, =1 square, <1 portrait) so novel ratios
+// like 21:9, 4:5, 2:1 group correctly, and sorts widest→squarest within each
+// group — matching the existing visual language. Empty groups are dropped.
+function groupAspectRatios(ratios: string[]): { label: string; ratios: string[] }[] {
+  const landscape: string[] = [];
+  const square: string[] = [];
+  const portrait: string[] = [];
+  const seen = new Set<string>();
+  for (const r of ratios) {
+    if (seen.has(r)) continue;
+    const parsed = parseRatio(r);
+    if (!parsed) continue;
+    seen.add(r);
+    const [w, h] = parsed;
+    if (w > h) landscape.push(r);
+    else if (w === h) square.push(r);
+    else portrait.push(r);
+  }
+  const value = (r: string) => {
+    const [w, h] = parseRatio(r) as [number, number];
+    return w / h;
+  };
+  // Landscape: widest (largest w/h) first, toward square. Portrait: tallest
+  // (smallest w/h) first, toward square. Both read "most extreme → squarest".
+  landscape.sort((a, b) => value(b) - value(a));
+  portrait.sort((a, b) => value(a) - value(b));
+  const groups: { label: string; ratios: string[] }[] = [];
+  if (landscape.length) groups.push({ label: 'Landscape', ratios: landscape });
+  if (square.length) groups.push({ label: 'Square', ratios: square });
+  if (portrait.length) groups.push({ label: 'Portrait', ratios: portrait });
+  return groups;
+}
 
 // A small box drawn to the EXACT aspect ratio it labels: the longer side fills
 // a 16px square box, the shorter side scales proportionally — so 16:9 is a wide
@@ -50,22 +95,102 @@ function AspectRatioIcon({ ratio }: { ratio: string }) {
   );
 }
 
+/**
+ * sanitizeGenerationOptions resets any current selection the given model+modality
+ * does not support back to Auto, returning a new options object. It is the pure
+ * core of the composer's "switching models can't leave a stale, now-invalid
+ * pick" behavior.
+ *
+ * Enforcement is caps-driven and per-knob: a knob is reset ONLY when the model
+ * advertises a non-empty set for it AND the current value is not a member. When
+ * caps are absent (or empty for that knob) nothing is reset — the model is
+ * treated as supporting anything (loose posture), exactly like the server. The
+ * video-only knobs (duration, audio) are additionally cleared whenever the
+ * modality is not video, since they are meaningless for image generation.
+ *
+ * Pure and idempotent: calling it on an already-valid selection returns an
+ * equivalent object (compare with generationOptionsEqual before writing, to
+ * avoid redundant state updates / render loops).
+ *
+ * @param opts     the current generation options (may be undefined-ish fields)
+ * @param model    the newly-selected model (null = none) — source of caps
+ * @param modality the active output modality ('image' | 'video')
+ * @returns a new ChatLabGenerationOptions with unsupported values reset to Auto
+ */
+export function sanitizeGenerationOptions(
+  opts: ChatLabGenerationOptions,
+  model: ChatLabModel | null,
+  modality: Exclude<ChatLabOutputModality, 'text'>,
+): ChatLabGenerationOptions {
+  const caps = model?.generationCaps;
+  const next: ChatLabGenerationOptions = { ...opts };
+
+  if (next.aspectRatio && caps?.aspectRatios?.length && !caps.aspectRatios.includes(next.aspectRatio)) {
+    next.aspectRatio = undefined;
+  }
+  if (next.resolution && caps?.resolutions?.length && !caps.resolutions.includes(next.resolution)) {
+    next.resolution = undefined;
+  }
+
+  if (modality !== 'video') {
+    // Duration + audio are video-only concepts.
+    next.durationSeconds = undefined;
+    next.generateAudio = undefined;
+  } else {
+    if (next.durationSeconds && caps?.durations?.length && !caps.durations.includes(next.durationSeconds)) {
+      next.durationSeconds = undefined;
+    }
+    if (next.generateAudio !== undefined && !caps?.generateAudio) {
+      next.generateAudio = undefined;
+    }
+  }
+  return next;
+}
+
+/** Field-wise equality for the four generation knobs (used to skip no-op state
+ *  writes after sanitization). */
+export function generationOptionsEqual(a: ChatLabGenerationOptions, b: ChatLabGenerationOptions): boolean {
+  return (
+    (a.aspectRatio ?? undefined) === (b.aspectRatio ?? undefined) &&
+    (a.resolution ?? undefined) === (b.resolution ?? undefined) &&
+    (a.durationSeconds ?? undefined) === (b.durationSeconds ?? undefined) &&
+    (a.generateAudio ?? undefined) === (b.generateAudio ?? undefined)
+  );
+}
+
 interface GenerationOptionsProps {
   modality: Exclude<ChatLabOutputModality, 'text'>;
+  model: ChatLabModel | null;
   value: ChatLabGenerationOptions;
   onChange: (options: ChatLabGenerationOptions) => void;
   disabled?: boolean;
 }
 
-export default function GenerationOptions({ modality, value, onChange, disabled }: GenerationOptionsProps) {
-  const resolutions = modality === 'video' ? VIDEO_RESOLUTIONS : IMAGE_RESOLUTIONS;
+export default function GenerationOptions({ modality, model, value, onChange, disabled }: GenerationOptionsProps) {
+  const caps = model?.generationCaps;
+
+  // Per-knob choice lists: the model's set when it advertises one, else the
+  // generic fallback (so a caps gap degrades to the full list, never a blank).
+  const aspectGroups = groupAspectRatios(caps?.aspectRatios?.length ? caps.aspectRatios : FALLBACK_ASPECTS);
+  const resolutions = caps?.resolutions?.length
+    ? caps.resolutions
+    : modality === 'video'
+      ? VIDEO_RESOLUTIONS
+      : IMAGE_RESOLUTIONS;
+  const durations = caps?.durations ?? [];
+  const showDurationSelect = modality === 'video' && durations.length > 0;
+  const showDurationInput = modality === 'video' && !showDurationSelect;
+  const showAudio = modality === 'video' && !!caps?.generateAudio;
 
   // A compact badge count of how many overrides are active (so the trigger hints
   // at non-default settings without opening the popover).
   const activeCount =
     (value.aspectRatio ? 1 : 0) +
     (value.resolution ? 1 : 0) +
-    (modality === 'video' && value.durationSeconds ? 1 : 0);
+    (modality === 'video' && value.durationSeconds ? 1 : 0) +
+    (showAudio && value.generateAudio !== undefined ? 1 : 0);
+
+  const audioValue = value.generateAudio === undefined ? AUTO : value.generateAudio ? 'on' : 'off';
 
   return (
     <Popover>
@@ -94,7 +219,7 @@ export default function GenerationOptions({ modality, value, onChange, disabled 
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={AUTO}>Auto</SelectItem>
-              {ASPECT_GROUPS.map((g) => (
+              {aspectGroups.map((g) => (
                 <SelectGroup key={g.label}>
                   <SelectLabel>{g.label}</SelectLabel>
                   {g.ratios.map((r) => (
@@ -131,7 +256,31 @@ export default function GenerationOptions({ modality, value, onChange, disabled 
           </Select>
         </div>
 
-        {modality === 'video' && (
+        {showDurationSelect && (
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Duration</label>
+            <Select
+              value={value.durationSeconds ? String(value.durationSeconds) : AUTO}
+              onValueChange={(v) =>
+                onChange({ ...value, durationSeconds: v === AUTO ? undefined : parseInt(v, 10) })
+              }
+            >
+              <SelectTrigger size="sm" className="h-8 w-full text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={AUTO}>Auto</SelectItem>
+                {durations.map((d) => (
+                  <SelectItem key={d} value={String(d)}>
+                    {d}s
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {showDurationInput && (
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground" htmlFor="gen-duration">
               Duration (seconds)
@@ -150,6 +299,27 @@ export default function GenerationOptions({ modality, value, onChange, disabled 
               }}
               className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs outline-none focus:border-ring"
             />
+          </div>
+        )}
+
+        {showAudio && (
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Audio</label>
+            <Select
+              value={audioValue}
+              onValueChange={(v) =>
+                onChange({ ...value, generateAudio: v === AUTO ? undefined : v === 'on' })
+              }
+            >
+              <SelectTrigger size="sm" className="h-8 w-full text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={AUTO}>Auto</SelectItem>
+                <SelectItem value="on">On</SelectItem>
+                <SelectItem value="off">Off</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         )}
       </PopoverContent>

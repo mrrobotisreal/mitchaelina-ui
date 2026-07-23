@@ -26,7 +26,7 @@ import {
 import { useViewAs } from '@/lib/viewAs';
 import ModelPicker from './model-picker';
 import ReasoningPicker from './reasoning-picker';
-import GenerationOptions from './generation-options';
+import GenerationOptions, { generationOptionsEqual, sanitizeGenerationOptions } from './generation-options';
 
 // The output modalities a model can PRODUCE (text chat, image gen, video gen).
 // A model may support more than one (e.g. Gemini-image does text + image); the
@@ -187,6 +187,23 @@ export default function Composer({
       onOutputModalityChange(modalities[0]);
     }
   }, [selectedModel, modalities, outputModality, onOutputModalityChange]);
+
+  // Sanitize the generation knobs whenever the model or modality changes: any
+  // selection the NEW model+modality doesn't support silently resets to Auto
+  // (written through the normal onChange path so persistence stays consistent).
+  // Guarded by an equality check so a no-op sanitize never triggers a re-render
+  // loop. Only runs for generation modalities (text has no knobs).
+  useEffect(() => {
+    if (!isGeneration) return;
+    const sanitized = sanitizeGenerationOptions(
+      generationOptions,
+      selectedModel,
+      outputModality as Exclude<ChatLabOutputModality, 'text'>,
+    );
+    if (!generationOptionsEqual(sanitized, generationOptions)) {
+      onGenerationOptionsChange(sanitized);
+    }
+  }, [selectedModel, outputModality, isGeneration, generationOptions, onGenerationOptionsChange]);
 
   // Auto-grow the textarea up to a cap; reset height when cleared.
   const autoGrow = useCallback(() => {
@@ -640,6 +657,7 @@ export default function Composer({
         {isGeneration ? (
           <GenerationOptions
             modality={outputModality as Exclude<ChatLabOutputModality, 'text'>}
+            model={selectedModel}
             value={generationOptions}
             onChange={onGenerationOptionsChange}
             disabled={isStreaming}

@@ -36,6 +36,21 @@ export const ChatLabModelPricingSchema = z.object({
   completionUsdPerMTok: z.number(),
 });
 
+/** Normalized per-model generation capabilities (aspect ratios / resolutions /
+ *  durations / audio) from the API's discovery layer. Every field defaults to
+ *  empty/false so a partially-populated or older payload still parses; the whole
+ *  object is optional on the model (absent = unknown → the popover shows the
+ *  full generic option lists and the server validates loosely, i.e. today's
+ *  behavior). An EMPTY array for a knob means "unknown for that knob" — that one
+ *  control falls back to its generic list while the others stay restricted. */
+export const ChatLabGenerationCapsSchema = z.object({
+  aspectRatios: z.array(z.string()).optional().default([]),
+  resolutions: z.array(z.string()).optional().default([]),
+  durations: z.array(z.number()).optional().default([]), // video only
+  generateAudio: z.boolean().optional().default(false), // video only
+});
+export type ChatLabGenerationCaps = z.infer<typeof ChatLabGenerationCapsSchema>;
+
 export const ChatLabModelSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -54,6 +69,8 @@ export const ChatLabModelSchema = z.object({
   supportedEfforts: z.array(ChatLabEffortSchema).nullable(),
   pricing: ChatLabModelPricingSchema,
   created: z.number(),
+  // Additive + optional: absent on text models and on a not-yet-redeployed API.
+  generationCaps: ChatLabGenerationCapsSchema.optional(),
 });
 export type ChatLabModel = z.infer<typeof ChatLabModelSchema>;
 
@@ -345,13 +362,15 @@ export type ChatLabLocalToolEvent = Extract<ChatLabStreamEvent, { type: 'local_t
 export const ChatLabOutputModalitySchema = z.enum(['text', 'image', 'video']);
 export type ChatLabOutputModality = z.infer<typeof ChatLabOutputModalitySchema>;
 
-/** Optional generation knobs; empty/0 means provider default (omitted from the
- *  request). Aspect ratio "W:H", resolution one of the server's allowlist,
- *  duration in seconds (video only). */
+/** Optional generation knobs; empty/0/undefined means provider default (omitted
+ *  from the request). Aspect ratio "W:H", resolution one of the server's
+ *  allowlist, duration in seconds (video only). generateAudio is video-only and
+ *  three-state: undefined = Auto (omit), true = force on, false = force off. */
 export interface ChatLabGenerationOptions {
   aspectRatio?: string;
   resolution?: string;
   durationSeconds?: number;
+  generateAudio?: boolean;
 }
 
 // ---------------------------------------------------------------------------

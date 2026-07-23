@@ -122,6 +122,9 @@ function cleanGenerationOptions(o?: ChatLabGenerationOptions): ChatLabGeneration
   if (o.aspectRatio) out.aspectRatio = o.aspectRatio;
   if (o.resolution) out.resolution = o.resolution;
   if (o.durationSeconds && o.durationSeconds > 0) out.durationSeconds = o.durationSeconds;
+  // Audio is three-state: only carried when the user made an explicit On/Off
+  // choice (Auto === undefined is omitted so the provider default applies).
+  if (o.generateAudio !== undefined) out.generateAudio = o.generateAudio;
   return Object.keys(out).length > 0 ? out : null;
 }
 
